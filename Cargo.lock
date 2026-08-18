@@ -467,27 +467,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
-name = "ff"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "http",
- "httparse",
- "pin-project-lite",
- "rand",
- "rmp",
- "rmp-serde",
- "serde",
- "serde_json",
- "tao",
- "tracing",
- "tracing-subscriber",
- "url",
- "wry",
-]
-
-[[package]]
 name = "field-offset"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2117,6 +2096,27 @@ name = "target-lexicon"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
+
+[[package]]
+name = "taurino-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "http",
+ "httparse",
+ "pin-project-lite",
+ "rand",
+ "rmp",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "tao",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wry",
+]
 
 [[package]]
 name = "tendril"
