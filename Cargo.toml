@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# taurino-types = {git="https://github.com/taurino-foundation/taurino-types", version = "0.1.0" }
+# taurino-runtime = {git="https://github.com/taurino-foundation/taurino-runtime", version = "0.1.0" }
+# taurino-window = {git="https://github.com/taurino-foundation/taurino-window", version = "0.1.0" }
+# taurino-tools = {git="https://github.com/taurino-foundation/taurino-tools", version = "0.1.0" }
 anyhow = "1.0.104"
 tao = "0.36.0"
 wry = "0.56.1"
