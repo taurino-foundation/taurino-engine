@@ -1,0 +1,133 @@
+use taurino_core::serde::{Deserialize, Serialize};
+use url::Url;
+
+
+// ============================================================================
+// WebViewOptions
+// ============================================================================
+
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+#[serde(
+    crate = "taurino_core::serde",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+pub struct WebViewOptions {
+    pub label: String,
+
+    #[serde(default)]
+    pub child: bool,
+
+    #[serde(default)]
+    pub url: WebviewUrl,
+
+    // ...
+
+    #[serde(default)]
+    pub navigation_policy: Option<NavigationPolicy>,
+
+    /// Controls requests from `window.open`, `target="_blank"`, etc.
+    #[serde(default)]
+    pub new_window_policy: Option<NewWindowPolicy>,
+
+    // ...
+}
+
+// ============================================================================
+// Default
+// ============================================================================
+
+impl Default for WebViewOptions {
+    fn default() -> Self {
+        Self {
+            label: "root".to_string(),
+            child: false,
+            url: WebviewUrl::default(),
+
+            // ...
+
+            navigation_policy: None,
+            new_window_policy: None,
+
+            // ...
+        }
+    }
+}
+
+// ============================================================================
+// WRY integration
+// ============================================================================
+
+if let Some(policy) = options.new_window_policy.clone() {
+    let engine_manager = engine_manager.clone();
+
+    webview_builder =
+        webview_builder.with_new_window_req_handler(move |raw_url, features| {
+            let Ok(url) = raw_url.parse::<Url>() else {
+                return taurino_core::wry::NewWindowResponse::Deny;
+            };
+
+            match policy.evaluate(&url) {
+                NewWindowAction::Allow => {
+                    taurino_core::wry::NewWindowResponse::Allow
+                }
+
+                NewWindowAction::Deny => {
+                    taurino_core::wry::NewWindowResponse::Deny
+                }
+
+                NewWindowAction::Create { mut window } => {
+                    // Requested URL becomes the URL of the first configured WebView.
+                    if let Some(webview) = window.webviews.first_mut() {
+                        webview.url = WebviewUrl::External(url.clone());
+                    }
+
+                    // WRY expects an immediate response here.
+                    //
+                    // Your engine must create the native window/webview synchronously
+                    // and return its native WebView handle.
+                    match engine_manager.create_new_window_for_request(
+                        *window,
+                        &features,
+                    ) {
+                        Ok(webview) => {
+                            #[cfg(windows)]
+                            {
+                                taurino_core::wry::NewWindowResponse::Create {
+                                    webview: webview.webview(),
+                                }
+                            }
+
+                            #[cfg(any(
+                                target_os = "linux",
+                                target_os = "dragonfly",
+                                target_os = "freebsd",
+                                target_os = "netbsd",
+                                target_os = "openbsd"
+                            ))]
+                            {
+                                taurino_core::wry::NewWindowResponse::Create {
+                                    webview: webview.webview(),
+                                }
+                            }
+
+                            #[cfg(target_os = "macos")]
+                            {
+                                use taurino_core::wry::WebViewExtMacOS;
+
+                                taurino_core::wry::NewWindowResponse::Create {
+                                    webview: WebViewExtMacOS::webview(&webview)
+                                        .as_super()
+                                        .into(),
+                                }
+                            }
+                        }
+
+                        Err(_) => {
+                            taurino_core::wry::NewWindowResponse::Deny
+                        }
+                    }
+                }
+            }
+        });
+}

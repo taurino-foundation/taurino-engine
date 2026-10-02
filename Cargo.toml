@@ -8,3 +8,7 @@ taurino-core = { version = "0.1.0", git = "https://github.com/taurino-foundation
 taurino-menu = { version = "0.1.0", git = "https://github.com/taurino-foundation/taurino-menu" }
 taurino-window = { version = "0.1.0", git = "https://github.com/taurino-foundation/taurino-window" }
 taurino-trayicon = { version = "0.1.0", git = "https://github.com/taurino-foundation/taurino-trayicon" }
+serde_with = "3.24.0"
+url = { version = "2.5.8",  features = [
+	"serde",
+]}
