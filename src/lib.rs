@@ -21,7 +21,8 @@ impl Engine {
         let webcontext = WebContextStore::default();
         let resource_table = arc_mut(ResourceTable::default());
         let menu_manager = taurino_menu::MenuManager::new()?;
-        let mut loop_builder = taurino_core::tao::event_loop::EventLoopBuilder::<()>::with_user_event();
+        let mut loop_builder =
+            taurino_core::tao::event_loop::EventLoopBuilder::<()>::with_user_event();
         #[cfg(windows)]
         {
             use taurino_core::tao::platform::windows::EventLoopBuilderExtWindows;

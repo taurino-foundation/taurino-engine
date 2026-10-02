@@ -5,7 +5,6 @@ use std::{
         hash_map::Entry::{Occupied, Vacant},
     },
     rc::Rc,
-    todo,
 };
 #[cfg(windows)]
 use taurino_core::wry::WebViewExtWindows;
@@ -16,6 +15,7 @@ use taurino_core::{
     wry::{DragDropEvent as WryDragDropEvent, WebContext as WryContext, WebViewBuilder},
 };
 
+use crate::window::webview::options::NewWindowPolicy;
 use crate::{
     manager::EngineManager,
     window::{
@@ -26,95 +26,9 @@ use crate::{
         },
     },
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use taurino_window::{utils::WebContext, webview::WebView};
 use url::Url;
-
-/// Information about the webview that initiated a new window request.
-#[derive(Debug)]
-pub struct NewWindowOpener {
-    /// The instance of the webview that initiated the new window request.
-    ///
-    /// This must be set as the related view of the new webview. See [`WebviewAttributes::related_view`].
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-    ))]
-    pub webview: taurino_core::webkit2gtk::WebView,
-    /// The instance of the webview that initiated the new window request.
-    ///
-    /// The target webview environment **MUST** match the environment of the opener webview. See [`WebviewAttributes::with_environment`].
-    #[cfg(windows)]
-    pub webview: taurino_core::webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
-    #[cfg(windows)]
-    pub environment: taurino_core::webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment,
-    /// The instance of the webview that initiated the new window request.
-    #[cfg(target_os = "macos")]
-    pub webview: taurino_core::objc2::rc::Retained<objc2_web_kit::WKWebView>,
-    /// Configuration of the target webview.
-    ///
-    /// This **MUST** be used when creating the target webview. See [`WebviewAttributes::webview_configuration`].
-    #[cfg(target_os = "macos")]
-    pub target_configuration: taurino_core::objc2::rc::Retained<objc2_web_kit::WKWebViewConfiguration>,
-}
-
-/// Window features of a window requested to open.
-#[derive(Debug)]
-pub struct NewWindowFeatures {
-    pub(crate) size: Option<taurino_core::dpi::LogicalSize<f64>>,
-    pub(crate) position: Option<taurino_core::dpi::LogicalPosition<f64>>,
-    pub(crate) opener: NewWindowOpener,
-}
-
-impl NewWindowFeatures {
-    pub fn new(
-        size: Option<taurino_core::dpi::LogicalSize<f64>>,
-        position: Option<taurino_core::dpi::LogicalPosition<f64>>,
-        opener: NewWindowOpener,
-    ) -> Self {
-        Self { size, position, opener }
-    }
-
-    /// Specifies the size of the content area
-    /// as defined by the user's operating system where the new window will be generated.
-    pub fn size(&self) -> Option<taurino_core::dpi::LogicalSize<f64>> {
-        self.size
-    }
-
-    /// Specifies the position of the window relative to the work area
-    /// as defined by the user's operating system where the new window will be generated.
-    pub fn position(&self) -> Option<taurino_core::dpi::LogicalPosition<f64>> {
-        self.position
-    }
-
-    /// Returns information about the webview that initiated a new window request.
-    pub fn opener(&self) -> &NewWindowOpener {
-        &self.opener
-    }
-}
-
-/// Response for the new window request handler.
-pub enum NewWindowResponse {
-    /// Allow the window to be opened with the default implementation.
-    Allow,
-    /// Allow the window to be opened, with the given window.
-    ///
-    /// ## Platform-specific:
-    ///
-    /// **Linux**: The webview must be related to the caller webview. See [`WebviewAttributes::related_view`].
-    /// **Windows**: The webview must use the same environment as the caller webview. See [`WebviewAttributes::with_environment`].
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    Create { window_id: WindowId },
-    /// Deny the window from being opened.
-    Deny,
-}
-
-fn new_window_handler(url: Url, frutur: NewWindowFeatures, managaer: Arc<EngineManager>) -> Result<NewWindowResponse> {
-    Ok(NewWindowResponse::Allow)
-}
 
 pub(crate) fn create_webview(
     engine_manager: Arc<EngineManager>,
@@ -122,7 +36,7 @@ pub(crate) fn create_webview(
     id: WebViewId,
     options: &WebViewOptions,
     window_options: &WindowOptions,
-    webview_manager: &mut WebViewManager,
+    window: &taurino_core::tao::window::Window,
 ) -> Result<WebView> {
     let browser_context = engine_manager.webcontext()?;
     let mut web_context = lock!(browser_context)?;
@@ -134,12 +48,18 @@ pub(crate) fn create_webview(
     let web_context = match entry {
         Occupied(occupied) => {
             let occupied = occupied.into_mut();
-            occupied.referenced_by_webviews.insert(options.label.clone());
+            occupied
+                .referenced_by_webviews
+                .insert(options.label.clone());
             occupied
         }
         Vacant(vacant) => {
             let mut web_context = WryContext::new(web_context_key.clone());
-            web_context.set_allows_automation(if automation_enabled { is_first_context } else { false });
+            web_context.set_allows_automation(if automation_enabled {
+                is_first_context
+            } else {
+                false
+            });
             vacant.insert(WebContext {
                 inner: web_context,
                 referenced_by_webviews: [options.label.clone()].into(),
@@ -171,9 +91,15 @@ pub(crate) fn create_webview(
 
     if let Some(background_throttling) = &options.background_throttling {
         webview_builder = webview_builder.with_background_throttling(match background_throttling {
-            BackgroundThrottlingPolicy::Disabled => taurino_core::wry::BackgroundThrottlingPolicy::Disabled,
-            BackgroundThrottlingPolicy::Suspend => taurino_core::wry::BackgroundThrottlingPolicy::Suspend,
-            BackgroundThrottlingPolicy::Throttle => taurino_core::wry::BackgroundThrottlingPolicy::Throttle,
+            BackgroundThrottlingPolicy::Disabled => {
+                taurino_core::wry::BackgroundThrottlingPolicy::Disabled
+            }
+            BackgroundThrottlingPolicy::Suspend => {
+                taurino_core::wry::BackgroundThrottlingPolicy::Suspend
+            }
+            BackgroundThrottlingPolicy::Throttle => {
+                taurino_core::wry::BackgroundThrottlingPolicy::Throttle
+            }
         });
     }
 
@@ -233,7 +159,7 @@ pub(crate) fn create_webview(
         });
     }
 
-    if let Some(_policy) = options.new_window_policy.clone() {
+    if let Some(policy) = options.new_window_policy.clone() {
         let engine_manager = Arc::clone(&engine_manager);
 
         webview_builder = webview_builder.with_new_window_req_handler(move |raw_url, features| {
@@ -242,6 +168,7 @@ pub(crate) fn create_webview(
             };
 
             let response = new_window_handler(
+                &policy,
                 url,
                 NewWindowFeatures::new(
                     features.size,
@@ -266,7 +193,9 @@ pub(crate) fn create_webview(
                     let window_manager = match engine_manager.window() {
                         Ok(manager) => manager,
                         Err(error) => {
-                            eprintln!("failed to lock WindowManager for new-window request: {error}");
+                            eprintln!(
+                                "failed to lock WindowManager for new-window request: {error}"
+                            );
                             return taurino_core::wry::NewWindowResponse::Deny;
                         }
                     };
@@ -283,7 +212,9 @@ pub(crate) fn create_webview(
 
                     taurino_core::wry::NewWindowResponse::Create {
                         #[cfg(target_os = "macos")]
-                        webview: taurino_core::wry::WebViewExtMacOS::webview(&*webview).as_super().into(),
+                        webview: taurino_core::wry::WebViewExtMacOS::webview(&*webview)
+                            .as_super()
+                            .into(),
 
                         #[cfg(any(
                             target_os = "linux",
@@ -309,7 +240,7 @@ pub(crate) fn create_webview(
         });
     }
 
-    let inner = Rc::new(webview_builder.build(webview_manager.window)?);
+    let inner = Rc::new(webview_builder.build(window)?);
     let context_key = if automation_enabled {
         None
     } else {
@@ -326,4 +257,110 @@ pub(crate) fn create_webview(
         arc_mut(None),
     );
     Ok(webview)
+}
+
+/// Information about the webview that initiated a new window request.
+#[derive(Debug)]
+pub struct NewWindowOpener {
+    /// The instance of the webview that initiated the new window request.
+    ///
+    /// This must be set as the related view of the new webview. See [`WebviewAttributes::related_view`].
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+    ))]
+    pub webview: taurino_core::webkit2gtk::WebView,
+    /// The instance of the webview that initiated the new window request.
+    ///
+    /// The target webview environment **MUST** match the environment of the opener webview. See [`WebviewAttributes::with_environment`].
+    #[cfg(windows)]
+    pub webview: taurino_core::webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
+    #[cfg(windows)]
+    pub environment:
+        taurino_core::webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment,
+    /// The instance of the webview that initiated the new window request.
+    #[cfg(target_os = "macos")]
+    pub webview: taurino_core::objc2::rc::Retained<objc2_web_kit::WKWebView>,
+    /// Configuration of the target webview.
+    ///
+    /// This **MUST** be used when creating the target webview. See [`WebviewAttributes::webview_configuration`].
+    #[cfg(target_os = "macos")]
+    pub target_configuration:
+        taurino_core::objc2::rc::Retained<objc2_web_kit::WKWebViewConfiguration>,
+}
+
+/// Window features of a window requested to open.
+#[derive(Debug)]
+pub struct NewWindowFeatures {
+    pub(crate) size: Option<taurino_core::dpi::LogicalSize<f64>>,
+    pub(crate) position: Option<taurino_core::dpi::LogicalPosition<f64>>,
+    pub(crate) opener: NewWindowOpener,
+}
+
+impl NewWindowFeatures {
+    pub fn new(
+        size: Option<taurino_core::dpi::LogicalSize<f64>>,
+        position: Option<taurino_core::dpi::LogicalPosition<f64>>,
+        opener: NewWindowOpener,
+    ) -> Self {
+        Self {
+            size,
+            position,
+            opener,
+        }
+    }
+
+    /// Specifies the size of the content area
+    /// as defined by the user's operating system where the new window will be generated.
+    pub fn size(&self) -> Option<taurino_core::dpi::LogicalSize<f64>> {
+        self.size
+    }
+
+    /// Specifies the position of the window relative to the work area
+    /// as defined by the user's operating system where the new window will be generated.
+    pub fn position(&self) -> Option<taurino_core::dpi::LogicalPosition<f64>> {
+        self.position
+    }
+
+    /// Returns information about the webview that initiated a new window request.
+    pub fn opener(&self) -> &NewWindowOpener {
+        &self.opener
+    }
+}
+
+/// Response for the new window request handler.
+pub enum NewWindowResponse {
+    /// Allow the window to be opened with the default implementation.
+    Allow,
+    /// Allow the window to be opened, with the given window.
+    ///
+    /// ## Platform-specific:
+    ///
+    /// **Linux**: The webview must be related to the caller webview. See [`WebviewAttributes::related_view`].
+    /// **Windows**: The webview must use the same environment as the caller webview. See [`WebviewAttributes::with_environment`].
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    Create { window_id: WindowId },
+    /// Deny the window from being opened.
+    Deny,
+}
+
+fn new_window_handler(
+    policy: &NewWindowPolicy,
+    url: Url,
+    features: NewWindowFeatures,
+    engine_manager: Arc<EngineManager>,
+) -> Result<NewWindowResponse> {
+    match policy.evaluate(&url) {
+        NewWindowAction::Allow => Ok(NewWindowResponse::Allow),
+
+        NewWindowAction::Deny => Ok(NewWindowResponse::Deny),
+
+        NewWindowAction::Create { window } => {
+            // später implementieren
+            Ok(NewWindowResponse::Deny)
+        }
+    }
 }

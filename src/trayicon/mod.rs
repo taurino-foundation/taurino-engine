@@ -12,7 +12,9 @@ pub struct TrayIconManager {
 
 impl TrayIconManager {
     pub fn new() -> Result<ArcMut<Self>> {
-        let manager = arc_mut(TrayIconManager { _engine_manager: None });
+        let manager = arc_mut(TrayIconManager {
+            _engine_manager: None,
+        });
         Ok(manager)
     }
 

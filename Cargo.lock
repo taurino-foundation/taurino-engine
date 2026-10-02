@@ -2547,7 +2547,7 @@ dependencies = [
 [[package]]
 name = "taurino-menu"
 version = "0.1.0"
-source = "git+https://github.com/taurino-foundation/taurino-menu#dcf3c3645d54c23c153e106a11d8320403f95eb1"
+source = "git+https://github.com/taurino-foundation/taurino-menu#7d74364c1c7356544fb00fe0d7acf08e0c99787e"
 dependencies = [
  "taurino-core",
 ]

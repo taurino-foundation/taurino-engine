@@ -1,133 +1,261 @@
-use taurino_core::serde::{Deserialize, Serialize};
-use url::Url;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", tag = "type")]
+pub enum NavigationPolicy {
+    /// Allow every navigation.
+    AllowAll,
 
-// ============================================================================
-// WebViewOptions
-// ============================================================================
+    /// Deny every navigation.
+    DenyAll,
 
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-#[serde(
-    crate = "taurino_core::serde",
-    rename_all = "camelCase",
-    deny_unknown_fields
-)]
-pub struct WebViewOptions {
-    pub label: String,
+    /// Only allow navigation to the same origin as the initial WebView URL.
+    SameOrigin,
 
-    #[serde(default)]
-    pub child: bool,
+    /// Allow navigation only when one of the configured rules matches.
+    AllowList { rules: Vec<NavigationRule> },
 
-    #[serde(default)]
-    pub url: WebviewUrl,
-
-    // ...
-
-    #[serde(default)]
-    pub navigation_policy: Option<NavigationPolicy>,
-
-    /// Controls requests from `window.open`, `target="_blank"`, etc.
-    #[serde(default)]
-    pub new_window_policy: Option<NewWindowPolicy>,
-
-    // ...
+    /// Deny navigation when one of the configured rules matches.
+    BlockList { rules: Vec<NavigationRule> },
 }
 
-// ============================================================================
-// Default
-// ============================================================================
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+pub struct NavigationRule {
+    /// Optional URL scheme, e.g. "https".
+    #[serde(default)]
+    pub scheme: Option<String>,
 
-impl Default for WebViewOptions {
-    fn default() -> Self {
-        Self {
-            label: "root".to_string(),
-            child: false,
-            url: WebviewUrl::default(),
+    /// Hostname to match, e.g. "example.com".
+    pub host: String,
 
-            // ...
+    /// Optional port to match.
+    #[serde(default)]
+    pub port: Option<u16>,
 
-            navigation_policy: None,
-            new_window_policy: None,
+    /// Whether subdomains should be accepted.
+    ///
+    /// Example:
+    /// host = "example.com"
+    /// include_subdomains = true
+    ///
+    /// Matches:
+    /// - example.com
+    /// - api.example.com
+    /// - auth.api.example.com
+    #[serde(default)]
+    pub include_subdomains: bool,
+}
 
-            // ...
+impl NavigationPolicy {
+    pub fn allows(&self, initial_url: Option<&Url>, target_url: &Url) -> bool {
+        match self {
+            Self::AllowAll => true,
+
+            Self::DenyAll => false,
+
+            Self::SameOrigin => {
+                let Some(initial_url) = initial_url else {
+                    return false;
+                };
+
+                same_origin(initial_url, target_url)
+            }
+
+            Self::AllowList { rules } => rules.iter().any(|rule| rule.matches(target_url)),
+
+            Self::BlockList { rules } => !rules.iter().any(|rule| rule.matches(target_url)),
         }
     }
 }
 
+impl NavigationRule {
+    pub fn matches(&self, url: &Url) -> bool {
+        if let Some(expected_scheme) = &self.scheme {
+            if !url.scheme().eq_ignore_ascii_case(expected_scheme) {
+                return false;
+            }
+        }
+
+        let Some(actual_host) = url.host_str() else {
+            return false;
+        };
+
+        if !self.matches_host(actual_host) {
+            return false;
+        }
+
+        if let Some(expected_port) = self.port {
+            if url.port_or_known_default() != Some(expected_port) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn matches_host(&self, actual_host: &str) -> bool {
+        if actual_host.eq_ignore_ascii_case(&self.host) {
+            return true;
+        }
+
+        if !self.include_subdomains {
+            return false;
+        }
+
+        let actual_host = actual_host.to_ascii_lowercase();
+        let expected_host = self.host.to_ascii_lowercase();
+
+        actual_host.ends_with(&format!(".{expected_host}"))
+    }
+}
+
+fn same_origin(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme() && a.host_str() == b.host_str() && a.port_or_known_default() == b.port_or_known_default()
+}
+
 // ============================================================================
-// WRY integration
+// New window configuration
 // ============================================================================
 
-if let Some(policy) = options.new_window_policy.clone() {
-    let engine_manager = engine_manager.clone();
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", tag = "type")]
+pub enum NewWindowPolicy {
+    /// Let the WebView runtime handle the request normally.
+    Allow,
 
-    webview_builder =
-        webview_builder.with_new_window_req_handler(move |raw_url, features| {
-            let Ok(url) = raw_url.parse::<Url>() else {
-                return taurino_core::wry::NewWindowResponse::Deny;
+    /// Reject every new-window request.
+    Deny,
+
+    /// Evaluate requests against configured rules.
+    Rules {
+        rules: Vec<NewWindowRule>,
+
+        #[serde(default)]
+        fallback: NewWindowAction,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+pub struct NewWindowRule {
+    /// Match condition.
+    pub request: NewWindowRequestMatcher,
+
+    /// Response returned when the request matches.
+    pub response: NewWindowAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+pub struct NewWindowRequestMatcher {
+    /// Optional URL scheme, e.g. "https".
+    #[serde(default)]
+    pub scheme: Option<String>,
+
+    /// Optional host, e.g. "example.com".
+    #[serde(default)]
+    pub host: Option<String>,
+
+    /// Include subdomains when matching `host`.
+    #[serde(default)]
+    pub include_subdomains: bool,
+
+    /// Optional port.
+    #[serde(default)]
+    pub port: Option<u16>,
+
+    /// Optional path prefix.
+    #[serde(default)]
+    pub path_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", tag = "type")]
+pub enum NewWindowAction {
+    /// Allow WRY to create the requested window.
+    Allow,
+
+    /// Reject the request.
+    #[default]
+    Deny,
+
+    /// Create a new engine-controlled window using the supplied configuration.
+    Create { window: Box<WindowOptions> },
+}
+
+// ============================================================================
+// Matching
+// ============================================================================
+
+impl NewWindowRequestMatcher {
+    pub fn matches(&self, url: &Url) -> bool {
+        if let Some(expected_scheme) = &self.scheme {
+            if !url.scheme().eq_ignore_ascii_case(expected_scheme) {
+                return false;
+            }
+        }
+
+        if let Some(expected_host) = &self.host {
+            let Some(actual_host) = url.host_str() else {
+                return false;
             };
 
-            match policy.evaluate(&url) {
-                NewWindowAction::Allow => {
-                    taurino_core::wry::NewWindowResponse::Allow
-                }
-
-                NewWindowAction::Deny => {
-                    taurino_core::wry::NewWindowResponse::Deny
-                }
-
-                NewWindowAction::Create { mut window } => {
-                    // Requested URL becomes the URL of the first configured WebView.
-                    if let Some(webview) = window.webviews.first_mut() {
-                        webview.url = WebviewUrl::External(url.clone());
-                    }
-
-                    // WRY expects an immediate response here.
-                    //
-                    // Your engine must create the native window/webview synchronously
-                    // and return its native WebView handle.
-                    match engine_manager.create_new_window_for_request(
-                        *window,
-                        &features,
-                    ) {
-                        Ok(webview) => {
-                            #[cfg(windows)]
-                            {
-                                taurino_core::wry::NewWindowResponse::Create {
-                                    webview: webview.webview(),
-                                }
-                            }
-
-                            #[cfg(any(
-                                target_os = "linux",
-                                target_os = "dragonfly",
-                                target_os = "freebsd",
-                                target_os = "netbsd",
-                                target_os = "openbsd"
-                            ))]
-                            {
-                                taurino_core::wry::NewWindowResponse::Create {
-                                    webview: webview.webview(),
-                                }
-                            }
-
-                            #[cfg(target_os = "macos")]
-                            {
-                                use taurino_core::wry::WebViewExtMacOS;
-
-                                taurino_core::wry::NewWindowResponse::Create {
-                                    webview: WebViewExtMacOS::webview(&webview)
-                                        .as_super()
-                                        .into(),
-                                }
-                            }
-                        }
-
-                        Err(_) => {
-                            taurino_core::wry::NewWindowResponse::Deny
-                        }
-                    }
-                }
+            if !host_matches(actual_host, expected_host, self.include_subdomains) {
+                return false;
             }
-        });
+        }
+
+        if let Some(expected_port) = self.port {
+            if url.port_or_known_default() != Some(expected_port) {
+                return false;
+            }
+        }
+
+        if let Some(path_prefix) = &self.path_prefix {
+            if !url.path().starts_with(path_prefix) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+fn host_matches(actual: &str, expected: &str, include_subdomains: bool) -> bool {
+    if actual.eq_ignore_ascii_case(expected) {
+        return true;
+    }
+
+    if !include_subdomains {
+        return false;
+    }
+
+    let actual = actual.to_ascii_lowercase();
+    let expected = expected.to_ascii_lowercase();
+
+    actual.ends_with(&format!(".{expected}"))
+}
+
+// ============================================================================
+// Policy evaluation
+// ============================================================================
+
+impl NewWindowPolicy {
+    pub fn evaluate(&self, url: &Url) -> NewWindowAction {
+        match self {
+            Self::Allow => NewWindowAction::Allow,
+
+            Self::Deny => NewWindowAction::Deny,
+
+            Self::Rules { rules, fallback } => {
+                for rule in rules {
+                    if rule.request.matches(url) {
+                        return rule.response.clone();
+                    }
+                }
+
+                fallback.clone()
+            }
+        }
+    }
 }

@@ -17,18 +17,16 @@ use crate::{
 
 pub mod options;
 
-pub struct WebViewManager<'a> {
+pub struct WebViewManager {
     webviews: Vec<WebView>,
     next_webview_id: Arc<AtomicU32>,
-    window: &'a taurino_core::tao::window::Window,
 }
 
-impl<'a> WebViewManager<'a> {
-    pub fn new(window: &'a taurino_core::tao::window::Window) -> anyhow::Result<Self> {
+impl WebViewManager {
+    pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
             webviews: Vec::new(),
             next_webview_id: Arc::new(AtomicU32::new(1)),
-            window,
         })
     }
 
@@ -41,7 +39,9 @@ impl<'a> WebViewManager<'a> {
     }
 
     pub fn get_by_label(&self, label: &str) -> Option<&WebView> {
-        self.webviews.iter().find(|webview| webview.label() == label)
+        self.webviews
+            .iter()
+            .find(|webview| webview.label() == label)
     }
 
     pub fn webviews(&self) -> &[WebView] {
@@ -50,15 +50,24 @@ impl<'a> WebViewManager<'a> {
 
     pub fn create_webview(
         &mut self,
+        window: &taurino_core::tao::window::Window,
         options: &WebViewOptions,
         window_options: &WindowOptions,
         engine_manager: Arc<EngineManager>,
         window_id: Arc<std::sync::Mutex<taurino_core::WindowId>>,
-    ) -> anyhow::Result<&WebView> {
+    ) -> anyhow::Result<WebViewId> {
         let id = self.next_webview_id();
 
-        let webview = create_webview(engine_manager, window_id, id, options, window_options, self)?;
+        let webview = create_webview(
+            engine_manager,
+            window_id,
+            id,
+            options,
+            window_options,
+            window,
+        )?;
+        self.webviews.push(webview);
 
-        Ok(self.webviews.last().unwrap())
+        Ok(id)
     }
 }

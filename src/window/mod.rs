@@ -123,11 +123,16 @@ impl WindowManager {
         let tao_id = window.tao()?.id();
 
         if self.windows.contains_key(&tao_id) {
-            return Err(anyhow!("window with Tao id {tao_id:?} is already registered"));
+            return Err(anyhow!(
+                "window with Tao id {tao_id:?} is already registered"
+            ));
         }
 
         if self.get_by_label(&window.label).is_some() {
-            return Err(anyhow!("window with label {:?} is already registered", window.label));
+            return Err(anyhow!(
+                "window with label {:?} is already registered",
+                window.label
+            ));
         }
 
         let label = window.label.clone();
@@ -143,9 +148,12 @@ impl WindowManager {
     // Lookup by Taurino WindowId
     // ------------------------------------------------------------------------
     pub fn get_window(&self, id: &Arc<std::sync::Mutex<WindowId>>) -> Result<&Window> {
-        let id = *id.lock().map_err(|_| anyhow!("window id mutex is poisoned"))?;
+        let id = *id
+            .lock()
+            .map_err(|_| anyhow!("window id mutex is poisoned"))?;
 
-        self.get(id).ok_or_else(|| anyhow!("window with id {id:?} not found"))
+        self.get(id)
+            .ok_or_else(|| anyhow!("window with id {id:?} not found"))
     }
 
     pub fn get(&self, id: WindowId) -> Option<&Window> {
@@ -293,3 +301,106 @@ impl WindowManager {
         self.windows_label_map.clear();
     }
 }
+
+/*
+fn new_window_handler(
+    policy: &NewWindowPolicy,
+    url: Url,
+    features: NewWindowFeatures,
+    engine_manager: Arc<EngineManager>,
+) -> Result<NewWindowResponse> {
+    match policy.evaluate(&url) {
+        NewWindowAction::Allow => Ok(NewWindowResponse::Allow),
+
+        NewWindowAction::Deny => Ok(NewWindowResponse::Deny),
+
+        NewWindowAction::Create { window } => {
+            let mut window_options = *window;
+
+            // requested URL in die Konfiguration des neuen WebViews übernehmen
+            //
+            // z. B.:
+            // window_options.webview.url = WebviewUrl::External(url);
+
+            // window.open()-Features ggf. übernehmen
+            //
+            // if let Some(size) = features.size() {
+            //     window_options.width = Some(size.width);
+            //     window_options.height = Some(size.height);
+            // }
+            //
+            // if let Some(position) = features.position() {
+            //     window_options.x = Some(position.x);
+            //     window_options.y = Some(position.y);
+            // }
+
+            let window_id = engine_manager.create_window_from_new_window_request(
+                window_options,
+                features,
+            )?;
+
+            Ok(NewWindowResponse::Create { window_id })
+        }
+    }
+}
+
+
+
+
+
+*/
+
+/*
+
+new_window_handler
+
+
+
+
+NewWindowAction::Create { window } => {
+    let mut window_options = *window;
+
+    // requested URL setzen
+    // window_options.webview.url = WebviewUrl::External(url);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    engine_manager
+        .proxy()?
+        .send_event(Message::CreateWindow(CreateWindowRequest {
+            options: window_options,
+            response: tx,
+        }))
+        .map_err(|_| anyhow!("failed to send CreateWindow request"))?;
+
+    let window_id = rx
+        .recv()
+        .map_err(|_| anyhow!("CreateWindow response channel closed"))??;
+
+    Ok(NewWindowResponse::Create { window_id })
+}
+
+
+eventloop
+
+
+
+match event {
+    Event::UserEvent(Message::CreateWindow(request)) => {
+        let result = {
+            let mut window_manager = engine_manager.window_mut()?;
+
+            window_manager.open_window(
+                &request.options,
+                event_loop_target,
+            )
+        };
+
+        let _ = request.response.send(result);
+    }
+
+    // ...
+}
+
+
+*/

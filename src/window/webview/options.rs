@@ -70,7 +70,11 @@ impl Default for WebviewUrl {
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    crate = "taurino_core::serde",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
 pub struct WebViewOptions {
     pub label: String,
     /// Whether the webview is a child of the window or not. Defaults to `false`.
@@ -341,7 +345,11 @@ pub struct WebViewOptions {
 
 /// Background throttling policy.
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
-#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    crate = "taurino_core::serde",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
 pub enum BackgroundThrottlingPolicy {
     /// A policy where background throttling is disabled
     Disabled,
@@ -357,7 +365,11 @@ pub enum BackgroundThrottlingPolicy {
 ///
 /// - **Windows**: This option must be given the same value for all webviews that target the same data directory.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
-#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    crate = "taurino_core::serde",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
 #[non_exhaustive]
 pub enum ScrollBarStyle {
     #[default]
@@ -427,7 +439,11 @@ pub enum NavigationPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    crate = "taurino_core::serde",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
 pub struct NavigationRule {
     /// Optional URL scheme, e.g. "https".
     #[serde(default)]
@@ -518,7 +534,9 @@ impl NavigationRule {
 }
 
 fn same_origin(a: &Url, b: &Url) -> bool {
-    a.scheme() == b.scheme() && a.host_str() == b.host_str() && a.port_or_known_default() == b.port_or_known_default()
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
 }
 
 // ============================================================================
@@ -544,7 +562,11 @@ pub enum NewWindowPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    crate = "taurino_core::serde",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
 pub struct NewWindowRule {
     /// Match condition.
     pub request: NewWindowRequestMatcher,
@@ -554,7 +576,11 @@ pub struct NewWindowRule {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    crate = "taurino_core::serde",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
 pub struct NewWindowRequestMatcher {
     /// Optional URL scheme, e.g. "https".
     #[serde(default)]
