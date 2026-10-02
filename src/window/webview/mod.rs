@@ -1,12 +1,14 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU32, Ordering},
+use std::sync::Arc;
+
+use taurino_core::{
+    WebViewId,
+    anyhow::{Result, anyhow},
 };
+use taurino_window::webview::WebViewManager;
+
 mod factory;
-use taurino_core::{WebViewId, anyhow, tao::event_loop::EventLoopWindowTarget};
-
-use taurino_window::webview::WebView;
-
+pub mod options;
+mod webview_utils;
 use crate::{
     manager::EngineManager,
     window::{
@@ -15,59 +17,53 @@ use crate::{
     },
 };
 
-pub mod options;
+// =========================================================================
+// Creation
+// =========================================================================
 
-pub struct WebViewManager {
-    webviews: Vec<WebView>,
-    next_webview_id: Arc<AtomicU32>,
-}
-
-impl WebViewManager {
-    pub fn new() -> anyhow::Result<Self> {
-        Ok(Self {
-            webviews: Vec::new(),
-            next_webview_id: Arc::new(AtomicU32::new(1)),
-        })
+/// Creates and registers a new WebView.
+///
+/// The WebView is inserted only after its native creation succeeds.
+///
+/// # Errors
+///
+/// Returns an error if:
+///
+/// - another WebView already uses the requested label,
+/// - the generated WebView ID is already registered,
+/// - native WebView creation fails.
+pub fn attach_webview(
+    webview_manager: &mut WebViewManager,
+    window: &taurino_core::tao::window::Window,
+    options: &WebViewOptions,
+    window_options: &WindowOptions,
+    engine_manager: Arc<EngineManager>,
+    window_id: Arc<std::sync::Mutex<taurino_core::WindowId>>,
+) -> Result<WebViewId> {
+    if webview_manager.contains_label(&options.label) {
+        return Err(anyhow!(
+            "WebView with label {:?} is already registered",
+            options.label
+        ));
     }
 
-    pub fn next_webview_id(&self) -> taurino_core::WebViewId {
-        self.next_webview_id.fetch_add(1, Ordering::Relaxed).into()
+    let id = webview_manager.next_webview_id();
+
+    if webview_manager.contains(id) {
+        return Err(anyhow!("WebView with id {:?} is already registered", id));
     }
 
-    pub fn get_by_id(&self, id: WebViewId) -> Option<&WebView> {
-        self.webviews.iter().find(|webview| webview.id() == id)
-    }
+    let webview = create_webview(
+        engine_manager,
+        window_id,
+        id,
+        options,
+        window_options,
+        window,
+    )
+    .map_err(|error| anyhow!("failed to create WebView {:?}: {error}", options.label))?;
 
-    pub fn get_by_label(&self, label: &str) -> Option<&WebView> {
-        self.webviews
-            .iter()
-            .find(|webview| webview.label() == label)
-    }
+    webview_manager.insert(webview)?;
 
-    pub fn webviews(&self) -> &[WebView] {
-        &self.webviews
-    }
-
-    pub fn create_webview(
-        &mut self,
-        window: &taurino_core::tao::window::Window,
-        options: &WebViewOptions,
-        window_options: &WindowOptions,
-        engine_manager: Arc<EngineManager>,
-        window_id: Arc<std::sync::Mutex<taurino_core::WindowId>>,
-    ) -> anyhow::Result<WebViewId> {
-        let id = self.next_webview_id();
-
-        let webview = create_webview(
-            engine_manager,
-            window_id,
-            id,
-            options,
-            window_options,
-            window,
-        )?;
-        self.webviews.push(webview);
-
-        Ok(id)
-    }
+    Ok(id)
 }

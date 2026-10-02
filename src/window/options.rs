@@ -259,7 +259,7 @@ fn default_height() -> f64 {
 }
 
 fn default_title() -> String {
-    "Tauri App".to_string()
+    "Taurino App".to_string()
 }
 
 pub(crate) fn default_true() -> bool {

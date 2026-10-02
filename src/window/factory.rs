@@ -3,25 +3,28 @@ use std::sync::{Arc, Mutex, atomic::AtomicBool};
 /* use taurino_window::window::Window; */
 use taurino_core::{
     MonitorExt, WindowId as CoreWindowId, anyhow, arc_mut, calculate_window_center_position,
-    dpi::PhysicalSize, tao::event_loop::EventLoopWindowTarget,
+    dpi::PhysicalSize,
 };
 
 use crate::{
+    handler::TaurinoWindowTarget,
     manager::EngineManager,
-    window::{options::WindowOptions, webview::WebViewManager},
+    window::{options::WindowOptions, webview::attach_webview},
 };
 use anyhow::Result;
+#[cfg(windows)]
+use taurino_core::softbuffer;
 #[cfg(windows)]
 use taurino_core::tao::platform::windows::WindowExtWindows;
 use taurino_menu::RawWindow;
 #[cfg(windows)]
 use taurino_window::config::FocusState;
-use taurino_window::window::Window;
+use taurino_window::{webview::WebViewManager, window::Window};
 
-pub fn create_window<T: 'static>(
+pub fn create_window(
     engine_manager: Arc<EngineManager>,
     id: CoreWindowId,
-    window_target: &EventLoopWindowTarget<T>,
+    window_target: &TaurinoWindowTarget,
     window_options: &WindowOptions,
 ) -> Result<Window> {
     let mut window_builder = taurino_window::WindowBuilder::new()
@@ -160,13 +163,11 @@ pub fn create_window<T: 'static>(
             _marker: &std::marker::PhantomData,
         };
 
-        arc_mut({
-            Some(
-                engine_manager
-                    .menu()?
-                    .create_window_menu(raw, theme, None)?,
-            )
-        })
+        arc_mut(Some(
+            engine_manager
+                .menu()?
+                .create_window_menu(raw, theme, None)?,
+        ))
     };
 
     // On macOS, `with_position` uses the content origin; the title bar is added
@@ -182,10 +183,23 @@ pub fn create_window<T: 'static>(
     let mut webview_manager = WebViewManager::new()?;
 
     let wid = Arc::new(Mutex::new(id));
+
+    let has_child_webviews = window_options.webviews.len() > 1;
+
     for view_options in &window_options.webviews {
-        let _ = webview_manager.create_webview(
+        let mut view_options = view_options.clone();
+
+        // If only a single WebView exists in the list and the user has still set
+        // `child` to `true`, we must ensure that it is reset to `false`, because
+        // a single WebView in the list cannot be a child WebView of a window.
+        if !has_child_webviews {
+            view_options.child = false;
+        }
+
+        attach_webview(
+            &mut webview_manager,
             &window,
-            view_options,
+            &view_options,
             window_options,
             engine_manager.clone(),
             wid.clone(),
@@ -195,9 +209,7 @@ pub fn create_window<T: 'static>(
     let window = Arc::new(window);
 
     #[cfg(windows)]
-    let surface = if is_window_transparent {
-        use taurino_core::softbuffer;
-
+    let surface = arc_mut(if is_window_transparent {
         if let Ok(context) = softbuffer::Context::new(window.clone()) {
             if let Ok(mut surface) = softbuffer::Surface::new(&context, window.clone()) {
                 use taurino_core::WindowExt;
@@ -213,22 +225,19 @@ pub fn create_window<T: 'static>(
         }
     } else {
         None
-    };
+    });
 
-    #[cfg(windows)]
-    let surface = arc_mut(surface);
-    let webviews = webview_manager.webviews();
     Ok(Window::new(
         id,
         Some(window),
         menu,
-        webviews,
+        webview_manager,
         window_options.label.clone(),
         arc_mut(background_color),
         is_window_transparent,
         surface,
         focused_webview,
-        AtomicBool::new(false),
+        AtomicBool::new(has_child_webviews),
     ))
 }
 

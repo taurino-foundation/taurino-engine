@@ -1,3 +1,56 @@
+/// Registry and lifecycle owner for all windows known to the engine.
+///
+/// `WindowManager` maintains the relationship between Taurino's framework-level
+/// window identifiers and Tao's native [`TaoWindowId`] values.
+///
+/// Each registered window is stored as an [`Arc<Window>`], allowing other
+/// engine components to retain temporary shared references while keeping one
+/// authoritative registry of currently managed windows.
+///
+/// # Identifier model
+///
+/// Each window has three relevant identifiers:
+///
+/// - [`WindowId`] — stable Taurino framework identifier;
+/// - [`TaoWindowId`] — identifier assigned by Tao/native windowing;
+/// - window label — human-readable application-level identifier.
+///
+/// Separate maps are maintained so that lookups can efficiently move between
+/// these identifier domains.
+///
+/// # Registration
+///
+/// Windows are created through [`WindowManager::open_window`] and inserted into
+/// all internal indexes atomically from the manager's perspective.
+///
+/// Duplicate Taurino IDs, Tao IDs and labels are rejected.
+///
+/// # Removal
+///
+/// Removing a window must remove all indexes associated with it.
+///
+/// The returned [`Arc<Window>`] allows the caller to control when the final
+/// manager-owned reference is dropped. This is particularly useful during
+/// graceful shutdown because native window destruction can then occur after
+/// manager locks have already been released.
+///
+/// # Engine binding
+///
+/// A `WindowManager` is initially constructed without access to the surrounding
+/// engine. [`WindowManager::bind_manager`] later associates it with the shared
+/// [`EngineManager`].
+///
+/// This two-phase construction avoids a cyclic dependency while
+/// [`EngineManager`] itself is being initialized.
+///
+/// # Thread safety
+///
+/// Access to `WindowManager` is expected to be synchronized externally through
+/// the `ArcMut<WindowManager>` owned by [`EngineManager`].
+///
+/// Native Tao window operations may additionally carry platform-specific
+/// thread-affinity requirements and should normally be executed from the Tao
+/// event-loop thread.
 use std::{
     collections::HashMap,
     sync::{
@@ -15,19 +68,21 @@ use taurino_core::{
 use taurino_window::window::Window;
 
 use crate::{
+    handler::TaurinoWindowTarget,
     manager::EngineManager,
     window::{factory::create_window, options::WindowOptions},
 };
 
 mod factory;
-mod options;
-mod webview;
+pub mod options;
+pub mod webview;
 
+taurino_core::unsafe_impl_sync_send!(WindowManager);
 pub struct WindowManager {
     engine_manager: Option<Arc<EngineManager>>,
 
     /// Tao WindowId -> Window
-    windows: HashMap<TaoWindowId, Window>,
+    windows: HashMap<TaoWindowId, Arc<Window>>,
 
     /// Taurino WindowId -> Tao WindowId
     windows_id_map: HashMap<WindowId, TaoWindowId>,
@@ -95,16 +150,16 @@ impl WindowManager {
     // Window creation
     // ------------------------------------------------------------------------
 
-    pub fn open_window<T: 'static>(
+    pub fn open_window(
         &mut self,
         window_options: &WindowOptions,
-        target: &EventLoopWindowTarget<T>,
+        target: &TaurinoWindowTarget,
     ) -> Result<WindowId> {
         let id = self.next_window_id();
 
         let engine_manager = self.engine_manager_cloned()?;
 
-        let window = create_window(engine_manager, id, target, window_options)?;
+        let window = Arc::new(create_window(engine_manager, id, target, window_options)?);
 
         self.insert_window(id, window)?;
 
@@ -115,7 +170,7 @@ impl WindowManager {
     // Register window
     // ------------------------------------------------------------------------
 
-    fn insert_window(&mut self, id: WindowId, window: Window) -> Result<()> {
+    fn insert_window(&mut self, id: WindowId, window: Arc<Window>) -> Result<()> {
         if self.windows_id_map.contains_key(&id) {
             return Err(anyhow!("window with id {id:?} is already registered"));
         }
@@ -147,7 +202,7 @@ impl WindowManager {
     // ------------------------------------------------------------------------
     // Lookup by Taurino WindowId
     // ------------------------------------------------------------------------
-    pub fn get_window(&self, id: &Arc<std::sync::Mutex<WindowId>>) -> Result<&Window> {
+    pub fn get_window(&self, id: &Arc<std::sync::Mutex<WindowId>>) -> Result<&Arc<Window>> {
         let id = *id
             .lock()
             .map_err(|_| anyhow!("window id mutex is poisoned"))?;
@@ -156,23 +211,23 @@ impl WindowManager {
             .ok_or_else(|| anyhow!("window with id {id:?} not found"))
     }
 
-    pub fn get(&self, id: WindowId) -> Option<&Window> {
+    pub fn get(&self, id: WindowId) -> Option<&Arc<Window>> {
         let tao_id = self.windows_id_map.get(&id)?;
 
         self.windows.get(tao_id)
     }
 
-    pub fn get_mut(&mut self, id: WindowId) -> Option<&mut Window> {
+    pub fn get_mut(&mut self, id: WindowId) -> Option<&mut Arc<Window>> {
         let tao_id = *self.windows_id_map.get(&id)?;
 
         self.windows.get_mut(&tao_id)
     }
 
-    pub fn get_by_id(&self, id: WindowId) -> Option<&Window> {
+    pub fn get_by_id(&self, id: WindowId) -> Option<&Arc<Window>> {
         self.get(id)
     }
 
-    pub fn get_by_id_mut(&mut self, id: WindowId) -> Option<&mut Window> {
+    pub fn get_by_id_mut(&mut self, id: WindowId) -> Option<&mut Arc<Window>> {
         self.get_mut(id)
     }
 
@@ -180,11 +235,11 @@ impl WindowManager {
     // Lookup by Tao WindowId
     // ------------------------------------------------------------------------
 
-    pub fn get_by_tao_id(&self, tao_id: TaoWindowId) -> Option<&Window> {
+    pub fn get_by_tao_id(&self, tao_id: TaoWindowId) -> Option<&Arc<Window>> {
         self.windows.get(&tao_id)
     }
 
-    pub fn get_by_tao_id_mut(&mut self, tao_id: TaoWindowId) -> Option<&mut Window> {
+    pub fn get_by_tao_id_mut(&mut self, tao_id: TaoWindowId) -> Option<&mut Arc<Window>> {
         self.windows.get_mut(&tao_id)
     }
 
@@ -198,13 +253,13 @@ impl WindowManager {
     // Lookup by label
     // ------------------------------------------------------------------------
 
-    pub fn get_by_label(&self, label: &str) -> Option<&Window> {
+    pub fn get_by_label(&self, label: &str) -> Option<&Arc<Window>> {
         let id = self.id_by_label(label)?;
 
         self.get(id)
     }
 
-    pub fn get_by_label_mut(&mut self, label: &str) -> Option<&mut Window> {
+    pub fn get_by_label_mut(&mut self, label: &str) -> Option<&mut Arc<Window>> {
         let id = self.id_by_label(label)?;
 
         self.get_mut(id)
@@ -240,7 +295,7 @@ impl WindowManager {
     // Remove window
     // ------------------------------------------------------------------------
 
-    pub fn remove(&mut self, id: WindowId) -> Option<Window> {
+    pub fn remove(&mut self, id: WindowId) -> Option<Arc<Window>> {
         let tao_id = self.windows_id_map.remove(&id)?;
 
         self.windows_label_map.remove(&id);
@@ -248,7 +303,7 @@ impl WindowManager {
         self.windows.remove(&tao_id)
     }
 
-    pub fn remove_by_tao_id(&mut self, tao_id: TaoWindowId) -> Option<Window> {
+    pub fn remove_by_tao_id(&mut self, tao_id: TaoWindowId) -> Option<Arc<Window>> {
         let id = self.id_from_tao_id(tao_id)?;
 
         self.windows_id_map.remove(&id);
@@ -257,7 +312,7 @@ impl WindowManager {
         self.windows.remove(&tao_id)
     }
 
-    pub fn remove_by_label(&mut self, label: &str) -> Option<Window> {
+    pub fn remove_by_label(&mut self, label: &str) -> Option<Arc<Window>> {
         let id = self.id_by_label(label)?;
 
         self.remove(id)
@@ -267,11 +322,11 @@ impl WindowManager {
     // Collections
     // ------------------------------------------------------------------------
 
-    pub fn windows(&self) -> impl Iterator<Item = &Window> {
+    pub fn windows(&self) -> impl Iterator<Item = &Arc<Window>> {
         self.windows.values()
     }
 
-    pub fn windows_mut(&mut self) -> impl Iterator<Item = &mut Window> {
+    pub fn windows_mut(&mut self) -> impl Iterator<Item = &mut Arc<Window>> {
         self.windows.values_mut()
     }
 

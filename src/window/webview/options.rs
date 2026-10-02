@@ -68,6 +68,16 @@ impl Default for WebviewUrl {
     }
 }
 
+impl WebviewUrl {
+    pub fn is_about_blank(&self) -> bool {
+        matches!(
+            self,
+            Self::CustomProtocol(url)
+                if url.scheme() == "about" && url.path() == "blank"
+        )
+    }
+}
+
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(
@@ -341,6 +351,22 @@ pub struct WebViewOptions {
     /// Controls requests from `window.open`, `target="_blank"`, etc.
     #[serde(default)]
     pub new_window_policy: Option<NewWindowPolicy>,
+    #[serde(default)]
+    pub permission_request_policy: Option<PermissionRequestPolicy>,
+
+    #[serde(default)]
+    pub web_content_process_terminate_policy: Option<WebContentProcessTerminatePolicy>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase")]
+pub enum WebContentProcessTerminatePolicy {
+    /// WebView automatisch neu laden.
+    #[default]
+    Reload,
+
+    /// Nur loggen, nichts weiter machen.
+    Ignore,
 }
 
 /// Background throttling policy.
@@ -388,6 +414,7 @@ pub enum ScrollBarStyle {
 impl Default for WebViewOptions {
     fn default() -> Self {
         Self {
+            web_content_process_terminate_policy: None,
             enable_clipboard_access: false,
             label: "root".to_string(),
             child: false,
@@ -415,6 +442,7 @@ impl Default for WebViewOptions {
             general_autofill_enabled: true,
             navigation_policy: None,
             new_window_policy: None,
+            permission_request_policy: None,
         }
     }
 }
@@ -693,3 +721,11 @@ impl NewWindowPolicy {
         }
     }
 }
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(
+    crate = "taurino_core::serde",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+pub struct PermissionRequestPolicy {}

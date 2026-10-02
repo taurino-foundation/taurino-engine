@@ -1,13 +1,16 @@
-use std::sync::{Arc, Mutex};
 use std::{
     collections::{
         HashSet,
         hash_map::Entry::{Occupied, Vacant},
     },
+    println,
     rc::Rc,
+    sync::{Arc, Mutex},
 };
-#[cfg(windows)]
-use taurino_core::wry::WebViewExtWindows;
+
+use anyhow::Result;
+use url::Url;
+
 use taurino_core::{
     WebViewId, WindowId, anyhow, arc_mut,
     dpi::PhysicalPosition,
@@ -15,20 +18,101 @@ use taurino_core::{
     wry::{DragDropEvent as WryDragDropEvent, WebContext as WryContext, WebViewBuilder},
 };
 
-use crate::window::webview::options::NewWindowPolicy;
+use taurino_window::{utils::WebContext, webview::WebView};
+
 use crate::{
     manager::EngineManager,
     window::{
         options::{DragDropEvent, WindowOptions},
         webview::{
-            WebViewManager,
-            options::{BackgroundThrottlingPolicy, NewWindowAction, WebViewOptions, WebviewUrl},
+            options::{BackgroundThrottlingPolicy, WebViewOptions, WebviewUrl},
+            webview_utils::{
+                NewWindowFeatures, NewWindowOpener, NewWindowResponse, new_window_handler,
+            },
         },
     },
 };
-use anyhow::Result;
-use taurino_window::{utils::WebContext, webview::WebView};
-use url::Url;
+
+// ============================================================================
+// Windows
+// ============================================================================
+
+#[cfg(target_os = "windows")]
+use taurino_core::wry::{WebViewBuilderExtWindows, WebViewExtWindows};
+
+#[cfg(target_os = "windows")]
+use taurino_core::tao::platform::windows::WindowExtWindows;
+
+#[cfg(target_os = "windows")]
+use taurino_core::undecorated_resizing;
+
+// ============================================================================
+// macOS
+// ============================================================================
+
+#[cfg(target_os = "macos")]
+use taurino_core::wry::{
+    WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtDarwin, WebViewExtMacOS,
+};
+
+#[cfg(target_os = "macos")]
+use crate::window::webview::webview_utils::on_web_content_process_terminate_handler;
+
+// ============================================================================
+// iOS
+// ============================================================================
+
+#[cfg(target_os = "ios")]
+use taurino_core::wry::{WebViewBuilderExtDarwin, WebViewBuilderExtIos, WebViewExtDarwin};
+
+#[cfg(target_os = "ios")]
+use crate::window::webview::webview_utils::on_web_content_process_terminate_handler;
+
+// ============================================================================
+// Linux / BSD
+// ============================================================================
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+))]
+use taurino_core::wry::{WebViewBuilderExtUnix, WebViewExtUnix};
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+))]
+use taurino_core::tao::platform::unix::WindowExtUnix;
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+))]
+use taurino_core::undecorated_resizing;
+
+// ============================================================================
+// Android
+// ============================================================================
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+))]
+use taurino_core::wry::WebViewBuilderExtUnix;
+#[cfg(target_os = "android")]
+use taurino_core::wry::{WebViewBuilderExtAndroid, WebViewExtAndroid};
 
 pub(crate) fn create_webview(
     engine_manager: Arc<EngineManager>,
@@ -239,14 +323,107 @@ pub(crate) fn create_webview(
             }
         });
     }
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        if let Some(policy) = options.web_content_process_terminate_policy.clone() {
+            webview_builder = webview_builder.with_on_web_content_process_terminate_handler(
+                on_web_content_process_terminate_handler(
+                    engine_manager.clone(),
+                    window_id.clone(),
+                    id,
+                    policy,
+                ),
+            );
+        }
+    }
+    if let Some(_policy) = options.permission_request_policy.clone() {}
 
-    let inner = Rc::new(webview_builder.build(window)?);
+    if !options.url.is_about_blank() {
+        webview_builder = webview_builder.with_url(options.url.to_string());
+    }
+    let webview = match options.child {
+        #[cfg(not(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "android"
+        )))]
+        true => {
+            let vbox = window.default_vbox().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "failed to create child WebView `{}`: \
+                     window does not provide a GTK default vbox",
+                    options.label
+                )
+            })?;
+
+            webview_builder.build_gtk(vbox)
+        }
+
+        #[cfg(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "android"
+        ))]
+        true => webview_builder.build_as_child(window),
+
+        false => {
+            #[cfg(any(
+                target_os = "windows",
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "android"
+            ))]
+            let builder = webview_builder.build(window);
+
+            #[cfg(not(any(
+                target_os = "windows",
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "android"
+            )))]
+            let builder = {
+                let vbox = window.default_vbox().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "failed to create WebView `{}`: \
+                         window does not provide a GTK default vbox",
+                        options.label
+                    )
+                })?;
+
+                webview_builder.build_gtk(vbox)
+            };
+
+            builder
+        }
+    }
+    .map_err(|error| anyhow::anyhow!("failed to build WebView `{}`: {error}", options.label))?;
+
+    if options.child == false {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        undecorated_resizing::attach_resize_handler(&webview);
+        #[cfg(windows)]
+        if window.is_resizable() && !window.is_decorated() {
+            undecorated_resizing::attach_resize_handler(
+                window.hwnd(),
+                window.has_undecorated_shadow(),
+            );
+        }
+    }
+    let inner = Rc::new(webview);
     let context_key = if automation_enabled {
         None
     } else {
         web_context_key.clone()
     };
-
+    println!("{:?}", options);
     let webview = WebView::new(
         id,
         options.label.clone(),
@@ -257,110 +434,4 @@ pub(crate) fn create_webview(
         arc_mut(None),
     );
     Ok(webview)
-}
-
-/// Information about the webview that initiated a new window request.
-#[derive(Debug)]
-pub struct NewWindowOpener {
-    /// The instance of the webview that initiated the new window request.
-    ///
-    /// This must be set as the related view of the new webview. See [`WebviewAttributes::related_view`].
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-    ))]
-    pub webview: taurino_core::webkit2gtk::WebView,
-    /// The instance of the webview that initiated the new window request.
-    ///
-    /// The target webview environment **MUST** match the environment of the opener webview. See [`WebviewAttributes::with_environment`].
-    #[cfg(windows)]
-    pub webview: taurino_core::webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
-    #[cfg(windows)]
-    pub environment:
-        taurino_core::webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment,
-    /// The instance of the webview that initiated the new window request.
-    #[cfg(target_os = "macos")]
-    pub webview: taurino_core::objc2::rc::Retained<objc2_web_kit::WKWebView>,
-    /// Configuration of the target webview.
-    ///
-    /// This **MUST** be used when creating the target webview. See [`WebviewAttributes::webview_configuration`].
-    #[cfg(target_os = "macos")]
-    pub target_configuration:
-        taurino_core::objc2::rc::Retained<objc2_web_kit::WKWebViewConfiguration>,
-}
-
-/// Window features of a window requested to open.
-#[derive(Debug)]
-pub struct NewWindowFeatures {
-    pub(crate) size: Option<taurino_core::dpi::LogicalSize<f64>>,
-    pub(crate) position: Option<taurino_core::dpi::LogicalPosition<f64>>,
-    pub(crate) opener: NewWindowOpener,
-}
-
-impl NewWindowFeatures {
-    pub fn new(
-        size: Option<taurino_core::dpi::LogicalSize<f64>>,
-        position: Option<taurino_core::dpi::LogicalPosition<f64>>,
-        opener: NewWindowOpener,
-    ) -> Self {
-        Self {
-            size,
-            position,
-            opener,
-        }
-    }
-
-    /// Specifies the size of the content area
-    /// as defined by the user's operating system where the new window will be generated.
-    pub fn size(&self) -> Option<taurino_core::dpi::LogicalSize<f64>> {
-        self.size
-    }
-
-    /// Specifies the position of the window relative to the work area
-    /// as defined by the user's operating system where the new window will be generated.
-    pub fn position(&self) -> Option<taurino_core::dpi::LogicalPosition<f64>> {
-        self.position
-    }
-
-    /// Returns information about the webview that initiated a new window request.
-    pub fn opener(&self) -> &NewWindowOpener {
-        &self.opener
-    }
-}
-
-/// Response for the new window request handler.
-pub enum NewWindowResponse {
-    /// Allow the window to be opened with the default implementation.
-    Allow,
-    /// Allow the window to be opened, with the given window.
-    ///
-    /// ## Platform-specific:
-    ///
-    /// **Linux**: The webview must be related to the caller webview. See [`WebviewAttributes::related_view`].
-    /// **Windows**: The webview must use the same environment as the caller webview. See [`WebviewAttributes::with_environment`].
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    Create { window_id: WindowId },
-    /// Deny the window from being opened.
-    Deny,
-}
-
-fn new_window_handler(
-    policy: &NewWindowPolicy,
-    url: Url,
-    features: NewWindowFeatures,
-    engine_manager: Arc<EngineManager>,
-) -> Result<NewWindowResponse> {
-    match policy.evaluate(&url) {
-        NewWindowAction::Allow => Ok(NewWindowResponse::Allow),
-
-        NewWindowAction::Deny => Ok(NewWindowResponse::Deny),
-
-        NewWindowAction::Create { window } => {
-            // später implementieren
-            Ok(NewWindowResponse::Deny)
-        }
-    }
 }
