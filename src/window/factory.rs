@@ -2,8 +2,7 @@ use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 /* use taurino_window::window::Window; */
 use taurino_core::{
-    MonitorExt, WindowId as CoreWindowId, anyhow, arc_mut, calculate_window_center_position,
-    dpi::PhysicalSize,
+    MonitorExt, WindowId as CoreWindowId, anyhow, arc_mut, calculate_window_center_position, dpi::PhysicalSize,
 };
 
 use crate::{
@@ -58,9 +57,7 @@ pub fn create_window(
             let mut shadow_width = 0;
             #[cfg(windows)]
             if window_builder.inner.window.decorations {
-                use taurino_core::windows::Win32::UI::WindowsAndMessaging::{
-                    AdjustWindowRect, WS_OVERLAPPEDWINDOW,
-                };
+                use taurino_core::windows::Win32::UI::WindowsAndMessaging::{AdjustWindowRect, WS_OVERLAPPEDWINDOW};
                 let mut rect = taurino_core::windows::Win32::Foundation::RECT::default();
                 let result = unsafe { AdjustWindowRect(&mut rect, WS_OVERLAPPEDWINDOW, false) };
                 if result.is_ok() {
@@ -79,15 +76,11 @@ pub fn create_window(
                 );
                 if window_size.width > constraint.width || window_size.height > constraint.height {
                     if window_size.width > constraint.width {
-                        inner_size.width = inner_size
-                            .width
-                            .saturating_sub(window_size.width - constraint.width);
+                        inner_size.width = inner_size.width.saturating_sub(window_size.width - constraint.width);
                         window_size.width = constraint.width;
                     }
                     if window_size.height > constraint.height {
-                        inner_size.height = inner_size
-                            .height
-                            .saturating_sub(window_size.height - constraint.height);
+                        inner_size.height = inner_size.height.saturating_sub(window_size.height - constraint.height);
                         window_size.height = constraint.height;
                     }
                     window_builder.inner.window.inner_size = Some(inner_size.into());
@@ -113,11 +106,8 @@ pub fn create_window(
     // monitor up front so the window is created fullscreen on that display.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     if let (true, Some(position)) = (is_fullscreen, initial_position) {
-        if let Some(target_monitor) =
-            find_monitor_for_position(event_loop.available_monitors(), position)
-        {
-            window_builder.inner.window.fullscreen =
-                Some(Fullscreen::Borderless(Some(target_monitor)));
+        if let Some(target_monitor) = find_monitor_for_position(event_loop.available_monitors(), position) {
+            window_builder.inner.window.fullscreen = Some(Fullscreen::Borderless(Some(target_monitor)));
         }
     }
 
@@ -135,9 +125,7 @@ pub fn create_window(
             window_builder.inner = window_builder.inner.with_automatic_window_tabbing(false);
         }
     }
-    let theme = window_builder
-        .get_theme()
-        .unwrap_or(taurino_core::dpi::Theme::Light);
+    let theme = window_builder.get_theme().unwrap_or(taurino_core::dpi::Theme::Light);
     let window = window_builder.inner.build(window_target)?;
 
     let menu = {
@@ -163,11 +151,7 @@ pub fn create_window(
             _marker: &std::marker::PhantomData,
         };
 
-        arc_mut(Some(
-            engine_manager
-                .menu()?
-                .create_window_menu(raw, theme, None)?,
-        ))
+        arc_mut(Some(engine_manager.menu()?.create_window_menu(raw, theme, None)?))
     };
 
     // On macOS, `with_position` uses the content origin; the title bar is added

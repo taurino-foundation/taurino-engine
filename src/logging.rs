@@ -78,10 +78,7 @@ impl FileLogger {
             Err(error) => return Err(error),
         }
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&self.path)?;
         self.writer = Some(BufWriter::new(file));
         self.bytes = 0;
         Ok(())
@@ -146,16 +143,11 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "taurino-log-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
         ));
         let path = root.join("taurino.log");
         let mut file_logger = FileLogger::open(path.clone()).unwrap();
-        file_logger
-            .write_record(&vec![b'a'; MAX_LOG_BYTES as usize])
-            .unwrap();
+        file_logger.write_record(&vec![b'a'; MAX_LOG_BYTES as usize]).unwrap();
         file_logger.write_record(b"next\n").unwrap();
 
         let current = fs::read(&path).unwrap();

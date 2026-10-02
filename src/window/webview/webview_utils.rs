@@ -207,8 +207,7 @@ pub struct NewWindowOpener {
     #[cfg(windows)]
     pub webview: taurino_core::webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
     #[cfg(windows)]
-    pub environment:
-        taurino_core::webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment,
+    pub environment: taurino_core::webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment,
     /// The instance of the webview that initiated the new window request.
     #[cfg(target_os = "macos")]
     pub webview: taurino_core::objc2::rc::Retained<objc2_web_kit::WKWebView>,
@@ -216,8 +215,7 @@ pub struct NewWindowOpener {
     ///
     /// This **MUST** be used when creating the target webview. See [`WebviewAttributes::webview_configuration`].
     #[cfg(target_os = "macos")]
-    pub target_configuration:
-        taurino_core::objc2::rc::Retained<objc2_web_kit::WKWebViewConfiguration>,
+    pub target_configuration: taurino_core::objc2::rc::Retained<objc2_web_kit::WKWebViewConfiguration>,
 }
 
 /// Window features of a window requested to open.
@@ -234,11 +232,7 @@ impl NewWindowFeatures {
         position: Option<taurino_core::dpi::LogicalPosition<f64>>,
         opener: NewWindowOpener,
     ) -> Self {
-        Self {
-            size,
-            position,
-            opener,
-        }
+        Self { size, position, opener }
     }
 
     /// Specifies the size of the content area
@@ -304,10 +298,7 @@ pub fn on_web_content_process_terminate_handler(
     policy: WebContentProcessTerminatePolicy,
 ) -> Box<OnWebContentProcessTerminateHandler> {
     Box::new(move || {
-        log::debug!(
-            "web content process terminated for webview {}",
-            webview_id.get()
-        );
+        log::debug!("web content process terminated for webview {}", webview_id.get());
 
         if matches!(policy, WebContentProcessTerminatePolicy::Ignore) {
             return;

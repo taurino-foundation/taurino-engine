@@ -60,8 +60,7 @@ use taurino_core::{
     tao::{
         event::{Event, WindowEvent},
         event_loop::{
-            ControlFlow, EventLoop, EventLoopBuilder, EventLoopClosed, EventLoopProxy,
-            EventLoopWindowTarget,
+            ControlFlow, EventLoop, EventLoopBuilder, EventLoopClosed, EventLoopProxy, EventLoopWindowTarget,
         },
         window::WindowId as TaoWindowId,
     },
@@ -95,8 +94,7 @@ pub type TaurinoWindowTarget = EventLoopWindowTarget<EventLoopMessage>;
 // pub type TaurinoLoopClosed = EventLoopClosed<EventLoopMessage>;
 pub type TaurinoLoopEvent<'a> = Event<'a, EventLoopMessage>;
 
-pub type TaurinoCallback =
-    Pin<Box<dyn Fn(&TaurinoWindowTarget, &mut ControlFlow) -> Result<()> + Send>>;
+pub type TaurinoCallback = Pin<Box<dyn Fn(&TaurinoWindowTarget, &mut ControlFlow) -> Result<()> + Send>>;
 
 /// Type-erased operation scheduled for execution on the Tao event-loop thread.
 ///
@@ -122,9 +120,7 @@ impl Debug for TaurinoEvent {
 }
 
 impl TaurinoEvent {
-    pub fn new<F: Fn(&TaurinoWindowTarget, &mut ControlFlow) -> Result<()> + Send + 'static>(
-        f: F,
-    ) -> Self {
+    pub fn new<F: Fn(&TaurinoWindowTarget, &mut ControlFlow) -> Result<()> + Send + 'static>(f: F) -> Self {
         Self(Box::pin(f))
     }
 }
@@ -172,9 +168,7 @@ impl EngineEventHandler {
             }
 
             match event {
-                taurino_core::tao::event::Event::WindowEvent {
-                    event, window_id, ..
-                } => {
+                taurino_core::tao::event::Event::WindowEvent { event, window_id, .. } => {
                     self.handle_window_event(event, window_id, control_flow)?;
                 }
 
@@ -247,8 +241,7 @@ impl EngineEventHandler {
             WindowEvent::Focused(focused) => {
                 let details = if focused { "focused" } else { "unfocused" };
 
-                self.manager
-                    .emit_global_window_event(window_label, details)?;
+                self.manager.emit_global_window_event(window_label, details)?;
             }
 
             WindowEvent::ScaleFactorChanged {
@@ -261,29 +254,25 @@ impl EngineEventHandler {
                     new_inner_size.width, new_inner_size.height,
                 );
 
-                self.manager
-                    .emit_global_window_event(window_label, &details)?;
+                self.manager.emit_global_window_event(window_label, &details)?;
             }
 
             WindowEvent::ThemeChanged(theme) => {
                 let details = format!("themeChanged: {theme:?}");
 
-                self.manager
-                    .emit_global_window_event(window_label, &details)?;
+                self.manager.emit_global_window_event(window_label, &details)?;
             }
 
             WindowEvent::Resized(size) => {
                 let details = format!("resized: width={}, height={}", size.width, size.height,);
 
-                self.manager
-                    .emit_global_window_event(window_label, &details)?;
+                self.manager.emit_global_window_event(window_label, &details)?;
             }
 
             WindowEvent::Moved(position) => {
                 let details = format!("moved: x={}, y={}", position.x, position.y,);
 
-                self.manager
-                    .emit_global_window_event(window_label, &details)?;
+                self.manager.emit_global_window_event(window_label, &details)?;
             }
 
             WindowEvent::CloseRequested => {
@@ -299,11 +288,7 @@ impl EngineEventHandler {
         Ok(())
     }
 
-    fn handle_window_destroyed(
-        &self,
-        window_id: TaoWindowId,
-        control_flow: &mut ControlFlow,
-    ) -> Result<()> {
+    fn handle_window_destroyed(&self, window_id: TaoWindowId, control_flow: &mut ControlFlow) -> Result<()> {
         // The window may already have been removed by CloseRequested.
         //
         // In that case Destroyed is only the native confirmation and
@@ -331,12 +316,7 @@ impl EngineEventHandler {
         Ok(())
     }
 
-    fn close_window(
-        &self,
-        window_id: TaoWindowId,
-        window_label: &str,
-        control_flow: &mut ControlFlow,
-    ) -> Result<()> {
+    fn close_window(&self, window_id: TaoWindowId, window_label: &str, control_flow: &mut ControlFlow) -> Result<()> {
         // Remove the window while holding only the WindowManager lock.
         let removed_window = {
             let mut window_manager = self.manager.window()?;
@@ -402,10 +382,7 @@ impl EngineEventHandler {
         let windows = {
             let mut window_manager = self.manager.window()?;
 
-            let labels = window_manager
-                .labels()
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
+            let labels = window_manager.labels().map(str::to_owned).collect::<Vec<_>>();
 
             window_manager.clear();
 
@@ -416,10 +393,7 @@ impl EngineEventHandler {
         for window_label in windows {
             log_if_err!(self.cleanup_window_resources(&window_label));
 
-            log_if_err!(
-                self.manager
-                    .emit_global_window_event(window_label, "destroyed")
-            );
+            log_if_err!(self.manager.emit_global_window_event(window_label, "destroyed"));
         }
 
         self.cleanup_app_resources()?;

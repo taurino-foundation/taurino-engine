@@ -370,14 +370,12 @@ impl Engine {
         //
         // Similar to window events, WebView events are forwarded through one
         // engine-wide callback.
-        manager.set_global_webview_event_handler(
-            |_manager, window_label, webview_label, event_details| {
-                println!(
-                    "WebView `{webview_label}` in window \
+        manager.set_global_webview_event_handler(|_manager, window_label, webview_label, event_details| {
+            println!(
+                "WebView `{webview_label}` in window \
                      `{window_label}` emitted: {event_details}"
-                );
-            },
-        )?;
+            );
+        })?;
 
         // ---------------------------------------------------------------------
         // Initial application window
@@ -394,9 +392,7 @@ impl Engine {
                         child: true,
 
                         // Load an external HTTPS resource.
-                        url: window::webview::options::WebviewUrl::External(Url::parse(
-                            "https://example.net",
-                        )?),
+                        url: window::webview::options::WebviewUrl::External(Url::parse("https://example.net")?),
 
                         // Preserve subsystem defaults for all options that
                         // are not explicitly required here.

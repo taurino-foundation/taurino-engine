@@ -89,8 +89,7 @@ pub type WindowEventHandler = Box<dyn Fn(Arc<EngineManager>, String, &str) + Sen
 ///
 /// `event_details` is currently represented as a string slice. It may be
 /// replaced by a dedicated event enum once the WebView event API is finalized.
-pub type WebViewEventHandler =
-    Box<dyn Fn(Arc<EngineManager>, String, String, &str) + Send + Sync + 'static>;
+pub type WebViewEventHandler = Box<dyn Fn(Arc<EngineManager>, String, String, &str) + Send + Sync + 'static>;
 
 /// Provides access to the engine's shared managers and global event handlers.
 ///
@@ -258,12 +257,7 @@ impl EngineManager {
             .map_err(|_| anyhow!("global WebView event handler mutex is poisoned"))?;
 
         if let Some(handler) = handler.as_ref() {
-            handler(
-                self.clone(),
-                window_label.into(),
-                webview_label.into(),
-                event_details,
-            );
+            handler(self.clone(), window_label.into(), webview_label.into(), event_details);
         }
 
         Ok(())

@@ -41,10 +41,7 @@ pub fn attach_webview(
     window_id: Arc<std::sync::Mutex<taurino_core::WindowId>>,
 ) -> Result<WebViewId> {
     if webview_manager.contains_label(&options.label) {
-        return Err(anyhow!(
-            "WebView with label {:?} is already registered",
-            options.label
-        ));
+        return Err(anyhow!("WebView with label {:?} is already registered", options.label));
     }
 
     let id = webview_manager.next_webview_id();
@@ -53,15 +50,8 @@ pub fn attach_webview(
         return Err(anyhow!("WebView with id {:?} is already registered", id));
     }
 
-    let webview = create_webview(
-        engine_manager,
-        window_id,
-        id,
-        options,
-        window_options,
-        window,
-    )
-    .map_err(|error| anyhow!("failed to create WebView {:?}: {error}", options.label))?;
+    let webview = create_webview(engine_manager, window_id, id, options, window_options, window)
+        .map_err(|error| anyhow!("failed to create WebView {:?}: {error}", options.label))?;
 
     webview_manager.insert(webview)?;
 

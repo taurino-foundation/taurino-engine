@@ -150,11 +150,7 @@ impl WindowManager {
     // Window creation
     // ------------------------------------------------------------------------
 
-    pub fn open_window(
-        &mut self,
-        window_options: &WindowOptions,
-        target: &TaurinoWindowTarget,
-    ) -> Result<WindowId> {
+    pub fn open_window(&mut self, window_options: &WindowOptions, target: &TaurinoWindowTarget) -> Result<WindowId> {
         let id = self.next_window_id();
 
         let engine_manager = self.engine_manager_cloned()?;
@@ -178,16 +174,11 @@ impl WindowManager {
         let tao_id = window.tao()?.id();
 
         if self.windows.contains_key(&tao_id) {
-            return Err(anyhow!(
-                "window with Tao id {tao_id:?} is already registered"
-            ));
+            return Err(anyhow!("window with Tao id {tao_id:?} is already registered"));
         }
 
         if self.get_by_label(&window.label).is_some() {
-            return Err(anyhow!(
-                "window with label {:?} is already registered",
-                window.label
-            ));
+            return Err(anyhow!("window with label {:?} is already registered", window.label));
         }
 
         let label = window.label.clone();
@@ -203,12 +194,9 @@ impl WindowManager {
     // Lookup by Taurino WindowId
     // ------------------------------------------------------------------------
     pub fn get_window(&self, id: &Arc<std::sync::Mutex<WindowId>>) -> Result<&Arc<Window>> {
-        let id = *id
-            .lock()
-            .map_err(|_| anyhow!("window id mutex is poisoned"))?;
+        let id = *id.lock().map_err(|_| anyhow!("window id mutex is poisoned"))?;
 
-        self.get(id)
-            .ok_or_else(|| anyhow!("window with id {id:?} not found"))
+        self.get(id).ok_or_else(|| anyhow!("window with id {id:?} not found"))
     }
 
     pub fn get(&self, id: WindowId) -> Option<&Arc<Window>> {

@@ -37,11 +37,7 @@ pub enum PreventOverflowConfig {
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-#[serde(
-    crate = "taurino_core::serde",
-    rename_all = "camelCase",
-    deny_unknown_fields
-)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
 pub struct WindowOptions {
     /// The window identifier. It must be alphanumeric.
     #[serde(default = "default_window_label")]
@@ -269,11 +265,7 @@ pub(crate) fn default_true() -> bool {
 /// The window effects configuration object
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
-#[serde(
-    crate = "taurino_core::serde",
-    rename_all = "camelCase",
-    deny_unknown_fields
-)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
 pub struct WindowEffectsConfig {
     /// List of Window effects to apply to the Window.
     ///
