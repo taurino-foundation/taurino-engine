@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use crate::window::{
-    options::window_effects::{WindowEffect, WindowEffectState},
-    webview::options::WebViewOptions,
+    webview_options::WebViewOptions,
+    window_options::window_effects::{WindowEffect, WindowEffectState},
 };
 use serde_with::skip_serializing_none;
 use taurino_core::{
@@ -456,7 +456,7 @@ impl Default for WindowOptions {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+/* #[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(crate = "taurino_core::serde")]
 #[serde(rename_all = "camelCase")]
 pub enum DragDropEvent {
@@ -482,3 +482,4 @@ pub enum DragDropEvent {
     /// The drag operation has been cancelled or left the window.
     Leave,
 }
+ */

@@ -53,7 +53,13 @@ use taurino_core::{ArcMut, anyhow, arc, lock, resources::ResourceTable};
 use taurino_menu::MenuManager;
 use taurino_window::utils::WebContextStore;
 
-use crate::{trayicon::TrayIconManager, window::WindowManager};
+use crate::{
+    trayicon::TrayIconManager,
+    window::{
+        WindowManager,
+        events::{DragDropEvent, WindowEvent},
+    },
+};
 
 /// Callback invoked for global window events.
 ///
@@ -64,13 +70,13 @@ use crate::{trayicon::TrayIconManager, window::WindowManager};
 ///
 /// - `manager` - Shared engine manager instance.
 /// - `window_label` - Label identifying the window that emitted the event.
-/// - `event_details` - Additional information associated with the event.
+/// - `event` - Additional information associated with the event.
 ///
 /// # Note
 ///
-/// `event_details` is currently represented as a string slice. It may be
+/// `event` is currently represented as a string slice. It may be
 /// replaced by a dedicated event enum once the window event API is finalized.
-pub type WindowEventHandler = Box<dyn Fn(Arc<EngineManager>, String, &str) + Send + Sync + 'static>;
+pub type WindowEventHandler = Box<dyn Fn(Arc<EngineManager>, String, WindowEvent) + Send + Sync + 'static>;
 
 /// Callback invoked for global WebView events.
 ///
@@ -83,13 +89,13 @@ pub type WindowEventHandler = Box<dyn Fn(Arc<EngineManager>, String, &str) + Sen
 /// - `manager` - Shared engine manager instance.
 /// - `window_label` - Label identifying the window containing the WebView.
 /// - `webview_label` - Label identifying the WebView that emitted the event.
-/// - `event_details` - Additional information associated with the event.
+/// - `event` - Additional information associated with the event.
 ///
 /// # Note
 ///
-/// `event_details` is currently represented as a string slice. It may be
+/// `event` is currently represented as a string slice. It may be
 /// replaced by a dedicated event enum once the WebView event API is finalized.
-pub type WebViewEventHandler = Box<dyn Fn(Arc<EngineManager>, String, String, &str) + Send + Sync + 'static>;
+pub type WebViewEventHandler = Box<dyn Fn(Arc<EngineManager>, String, String, WebViewEvent) + Send + Sync + 'static>;
 
 /// Provides access to the engine's shared managers and global event handlers.
 ///
@@ -165,7 +171,7 @@ impl EngineManager {
     /// Any previously registered handler is replaced.
     pub fn set_global_window_event_handler<F>(self: &Arc<Self>, handler: F) -> Result<()>
     where
-        F: Fn(Arc<EngineManager>, String, &str) + Send + Sync + 'static,
+        F: Fn(Arc<EngineManager>, String, WindowEvent) + Send + Sync + 'static,
     {
         let mut global_handler = self
             ._global_window_event_handler
@@ -195,7 +201,7 @@ impl EngineManager {
     pub fn emit_global_window_event(
         self: &Arc<Self>,
         window_label: impl Into<String>,
-        event_details: &str,
+        event: WindowEvent,
     ) -> Result<()> {
         let handler = self
             ._global_window_event_handler
@@ -203,7 +209,7 @@ impl EngineManager {
             .map_err(|_| anyhow!("global window event handler mutex is poisoned"))?;
 
         if let Some(handler) = handler.as_ref() {
-            handler(self.clone(), window_label.into(), event_details);
+            handler(self.clone(), window_label.into(), event); // <- Callback läuft MIT gehaltenem Lock!
         }
 
         Ok(())
@@ -218,7 +224,7 @@ impl EngineManager {
     /// Any previously registered handler is replaced.
     pub fn set_global_webview_event_handler<F>(self: &Arc<Self>, handler: F) -> Result<()>
     where
-        F: Fn(Arc<EngineManager>, String, String, &str) + Send + Sync + 'static,
+        F: Fn(Arc<EngineManager>, String, String, WebViewEvent) + Send + Sync + 'static,
     {
         let mut global_handler = self
             ._global_webview_event_handler
@@ -249,7 +255,7 @@ impl EngineManager {
         self: &Arc<Self>,
         window_label: impl Into<String>,
         webview_label: impl Into<String>,
-        event_details: &str,
+        event: WebViewEvent,
     ) -> Result<()> {
         let handler = self
             ._global_webview_event_handler
@@ -257,7 +263,7 @@ impl EngineManager {
             .map_err(|_| anyhow!("global WebView event handler mutex is poisoned"))?;
 
         if let Some(handler) = handler.as_ref() {
-            handler(self.clone(), window_label.into(), webview_label.into(), event_details);
+            handler(self.clone(), window_label.into(), webview_label.into(), event);
         }
 
         Ok(())
@@ -293,16 +299,16 @@ setter
 
 
 engine_manager.set_global_window_event_handler(
-    |manager, window_label, event_details| {
+    |manager, window_label, event| {
         println!(
-            "Window `{window_label}` emitted: {event_details}"
+            "Window `{window_label}` emitted: {event}"
         );
     },
 )?;
 engine_manager.set_global_webview_event_handler(
-    |manager, window_label, webview_label, event_details| {
+    |manager, window_label, webview_label, event| {
         println!(
-            "WebView `{webview_label}` in window `{window_label}` emitted: {event_details}"
+            "WebView `{webview_label}` in window `{window_label}` emitted: {event}"
         );
     },
 )?;
@@ -328,3 +334,12 @@ engine_manager.emit_global_webview_event(
 
 
 */
+
+pub fn lock_state<'a, T>(mutex: &'a Mutex<T>, name: &str) -> Result<MutexGuard<'a, T>> {
+    mutex.lock().map_err(|_| anyhow!("Window {name} mutex is poisoned"))
+}
+
+#[derive(Debug)]
+pub enum WebViewEvent {
+    DragDrop(DragDropEvent),
+}

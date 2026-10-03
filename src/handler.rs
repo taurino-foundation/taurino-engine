@@ -1,3 +1,4 @@
+use crate::window::events::{WindowEvent, WindowEventWrapper};
 /// Central event dispatcher and lifecycle coordinator for the engine.
 ///
 /// `EngineEventHandler` receives all events produced by the Tao event loop and
@@ -58,10 +59,8 @@ use std::{
 use taurino_core::{
     anyhow,
     tao::{
-        event::{Event, WindowEvent},
-        event_loop::{
-            ControlFlow, EventLoop, EventLoopBuilder, EventLoopClosed, EventLoopProxy, EventLoopWindowTarget,
-        },
+        event::Event,
+        event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget},
         window::WindowId as TaoWindowId,
     },
 };
@@ -131,7 +130,6 @@ impl Deref for TaurinoEvent {
         &self.0
     }
 }
-
 pub struct EngineEventHandler {
     /// Shared access to all engine subsystem managers.
     manager: Arc<EngineManager>,
@@ -142,6 +140,7 @@ pub struct EngineEventHandler {
     /// from multiple runtime paths.
     shutting_down: AtomicBool,
 }
+
 impl EngineEventHandler {
     pub fn new(manager: Arc<EngineManager>) -> Self {
         Self {
@@ -190,6 +189,7 @@ impl EngineEventHandler {
             // Global shutdown cleanup can be performed here.
         }
     }
+
     fn handle_user_message(
         &self,
         message: EventLoopMessage,
@@ -211,24 +211,50 @@ impl EngineEventHandler {
 
     fn handle_window_event(
         &self,
-        event: WindowEvent<'_>,
+        event: taurino_core::tao::event::WindowEvent<'_>,
         window_id: TaoWindowId,
         control_flow: &mut ControlFlow,
     ) -> Result<()> {
-        // `Destroyed` is special: Tao may emit it after the window has
-        // already been removed from the WindowManager.
-        if matches!(event, WindowEvent::Destroyed) {
+        use taurino_core::tao::event::WindowEvent as TaoWindowEvent;
+
+        // Destroyed kann kommen, nachdem das Window schon entfernt wurde.
+        if matches!(event, TaoWindowEvent::Destroyed) {
             return self.handle_window_destroyed(window_id, control_flow);
         }
 
-        // Resolve the window while holding the WindowManager lock,
-        // clone the Arc, and immediately release the manager lock.
-        //
-        // This is important because user callbacks may access the
-        // EngineManager and acquire other manager locks themselves.
+        // CloseRequested wird vom Wrapper nicht gemappt -> vorab behandeln.
+        if matches!(event, TaoWindowEvent::CloseRequested { .. }) {
+            let window = {
+                let window_manager = self.manager.window()?;
+                window_manager
+                    .get_by_tao_id(window_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("window with Tao id {window_id:?} not found"))?
+            };
+
+            let window_label = window.label.clone();
+
+            // Tao hat keinen signal_tx; wir erzeugen einen eigenen Kanal,
+            // falls ein Consumer das Schließen verhindern will.
+            let (signal_tx, signal_rx) = std::sync::mpsc::channel::<bool>();
+
+            self.manager
+                .emit_global_window_event(window_label.clone(), WindowEvent::CloseRequested { signal_tx })?;
+
+            // Wenn der Consumer `true` sendet, wird nicht geschlossen.
+            if let Ok(prevent) = signal_rx.try_recv() {
+                if prevent {
+                    return Ok(());
+                }
+            }
+
+            self.close_window(window_id, &window_label, control_flow)?;
+            return Ok(());
+        }
+
+        // Window auflösen, Lock sofort freigeben.
         let window = {
             let window_manager = self.manager.window()?;
-
             window_manager
                 .get_by_tao_id(window_id)
                 .cloned()
@@ -237,53 +263,13 @@ impl EngineEventHandler {
 
         let window_label = window.label.clone();
 
-        match event {
-            WindowEvent::Focused(focused) => {
-                let details = if focused { "focused" } else { "unfocused" };
+        // Tao-Event -> Taurino-WindowEvent
+        let Some(event) = WindowEventWrapper::parse(&window, &event).0 else {
+            return Ok(());
+        };
 
-                self.manager.emit_global_window_event(window_label, details)?;
-            }
-
-            WindowEvent::ScaleFactorChanged {
-                scale_factor,
-                new_inner_size,
-            } => {
-                let details = format!(
-                    "scaleFactorChanged: scale_factor={scale_factor}, \
-                     width={}, height={}",
-                    new_inner_size.width, new_inner_size.height,
-                );
-
-                self.manager.emit_global_window_event(window_label, &details)?;
-            }
-
-            WindowEvent::ThemeChanged(theme) => {
-                let details = format!("themeChanged: {theme:?}");
-
-                self.manager.emit_global_window_event(window_label, &details)?;
-            }
-
-            WindowEvent::Resized(size) => {
-                let details = format!("resized: width={}, height={}", size.width, size.height,);
-
-                self.manager.emit_global_window_event(window_label, &details)?;
-            }
-
-            WindowEvent::Moved(position) => {
-                let details = format!("moved: x={}, y={}", position.x, position.y,);
-
-                self.manager.emit_global_window_event(window_label, &details)?;
-            }
-
-            WindowEvent::CloseRequested => {
-                self.manager
-                    .emit_global_window_event(window_label.clone(), "closeRequested")?;
-
-                self.close_window(window_id, &window_label, control_flow)?;
-            }
-
-            _ => {}
-        }
+        // Direkt die Enum-Variante emitten — kein format!/&str mehr.
+        self.manager.emit_global_window_event(window_label, event)?;
 
         Ok(())
     }
@@ -305,7 +291,7 @@ impl EngineEventHandler {
         let window_label = window.label.clone();
 
         self.manager
-            .emit_global_window_event(window_label.clone(), "destroyed")?;
+            .emit_global_window_event(window_label.clone(), WindowEvent::Destroyed)?;
 
         self.cleanup_window_resources(&window_label)?;
 
@@ -393,7 +379,10 @@ impl EngineEventHandler {
         for window_label in windows {
             log_if_err!(self.cleanup_window_resources(&window_label));
 
-            log_if_err!(self.manager.emit_global_window_event(window_label, "destroyed"));
+            log_if_err!(
+                self.manager
+                    .emit_global_window_event(window_label, WindowEvent::Destroyed)
+            );
         }
 
         self.cleanup_app_resources()?;

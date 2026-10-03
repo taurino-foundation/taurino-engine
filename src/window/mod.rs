@@ -60,22 +60,21 @@ use std::{
 };
 
 use taurino_core::anyhow::{Result, anyhow};
-use taurino_core::{
-    ArcMut, WindowId, arc_mut,
-    tao::{event_loop::EventLoopWindowTarget, window::WindowId as TaoWindowId},
-};
+use taurino_core::{ArcMut, WindowId, arc_mut, tao::window::WindowId as TaoWindowId};
 
 use taurino_window::window::Window;
 
 use crate::{
     handler::TaurinoWindowTarget,
     manager::EngineManager,
-    window::{factory::create_window, options::WindowOptions},
+    window::{window_factory::create_window, window_options::WindowOptions},
 };
-
-mod factory;
-pub mod options;
-pub mod webview;
+pub(crate) mod events;
+mod webview_factory;
+mod webview_helpers;
+pub mod webview_options;
+mod window_factory;
+pub mod window_options;
 
 taurino_core::unsafe_impl_sync_send!(WindowManager);
 pub struct WindowManager {

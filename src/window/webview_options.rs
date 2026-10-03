@@ -1,13 +1,10 @@
 use std::{fmt, path::PathBuf};
 
 use serde_with::skip_serializing_none;
-use taurino_core::{
-    anyhow,
-    serde::{Deserialize, Deserializer, Serialize},
-};
+use taurino_core::serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
 
-use crate::window::options::{WindowOptions, default_true};
+use crate::window::window_options::{WindowOptions, default_true};
 
 /// An URL to open on a Tauri webview window.
 #[derive(PartialEq, Eq, Debug, Clone, Serialize)]

@@ -52,7 +52,7 @@ use url::Url;
 use crate::{
     handler::{EngineEventHandler, EventLoopMessage, TaurinoLoop, TaurinoLoopBuilder},
     manager::EngineManager,
-    window::{options::WindowOptions, webview::options::WebViewOptions},
+    window::{webview_options::WebViewOptions, window_options::WindowOptions},
 };
 
 /// Top-level owner and runtime coordinator of a Taurino application.
@@ -360,8 +360,8 @@ impl Engine {
         //
         // The current implementation only prints diagnostics. Applications or
         // higher framework layers can replace this with their own dispatcher.
-        manager.set_global_window_event_handler(|_manager, window_label, event_details| {
-            println!("Window `{window_label}` emitted: {event_details}");
+        manager.set_global_window_event_handler(|_manager, window_label, event| {
+            println!("Window `{window_label}` emitted: {:?}", event);
         })?;
 
         // ---------------------------------------------------------------------
@@ -370,10 +370,11 @@ impl Engine {
         //
         // Similar to window events, WebView events are forwarded through one
         // engine-wide callback.
-        manager.set_global_webview_event_handler(|_manager, window_label, webview_label, event_details| {
+        manager.set_global_webview_event_handler(|_manager, window_label, webview_label, event| {
             println!(
                 "WebView `{webview_label}` in window \
-                     `{window_label}` emitted: {event_details}"
+                     `{window_label}` emitted: {:?}",
+                event
             );
         })?;
 
@@ -389,10 +390,9 @@ impl Engine {
                     webviews: vec![WebViewOptions {
                         // Configure this WebView as a child of the native
                         // Taurino window.
-                        child: true,
 
                         // Load an external HTTPS resource.
-                        url: window::webview::options::WebviewUrl::External(Url::parse("https://example.net")?),
+                        url: window::webview_options::WebviewUrl::External(Url::parse("https://nextjs.org")?),
 
                         // Preserve subsystem defaults for all options that
                         // are not explicitly required here.
