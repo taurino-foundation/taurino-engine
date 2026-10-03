@@ -24,7 +24,8 @@ use crate::{
     window::{
         events::DragDropEvent,
         webview_helpers::{
-            NewWindowFeatures, NewWindowOpener, NewWindowResponse, new_window_handler,
+            NewWindowFeatures, NewWindowOpener, NewWindowResponse, from_wry_permission_kind, new_window_handler,
+            permission_request_handler, to_wry_permission_response,
         },
         webview_options::{BackgroundThrottlingPolicy, WebViewOptions, WebviewUrl},
         window_options::WindowOptions,
@@ -49,9 +50,7 @@ use taurino_core::undecorated_resizing;
 // ============================================================================
 
 #[cfg(target_os = "macos")]
-use taurino_core::wry::{
-    WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtDarwin, WebViewExtMacOS,
-};
+use taurino_core::wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtDarwin, WebViewExtMacOS};
 
 #[cfg(target_os = "macos")]
 use crate::window::webview::webview_helpers::on_web_content_process_terminate_handler;
@@ -130,18 +129,12 @@ pub(crate) fn create_webview(
     let web_context = match entry {
         Occupied(occupied) => {
             let occupied = occupied.into_mut();
-            occupied
-                .referenced_by_webviews
-                .insert(options.label.clone());
+            occupied.referenced_by_webviews.insert(options.label.clone());
             occupied
         }
         Vacant(vacant) => {
             let mut web_context = WryContext::new(web_context_key.clone());
-            web_context.set_allows_automation(if automation_enabled {
-                is_first_context
-            } else {
-                false
-            });
+            web_context.set_allows_automation(if automation_enabled { is_first_context } else { false });
             vacant.insert(WebContext {
                 inner: web_context,
                 referenced_by_webviews: [options.label.clone()].into(),
@@ -173,15 +166,9 @@ pub(crate) fn create_webview(
 
     if let Some(background_throttling) = &options.background_throttling {
         webview_builder = webview_builder.with_background_throttling(match background_throttling {
-            BackgroundThrottlingPolicy::Disabled => {
-                taurino_core::wry::BackgroundThrottlingPolicy::Disabled
-            }
-            BackgroundThrottlingPolicy::Suspend => {
-                taurino_core::wry::BackgroundThrottlingPolicy::Suspend
-            }
-            BackgroundThrottlingPolicy::Throttle => {
-                taurino_core::wry::BackgroundThrottlingPolicy::Throttle
-            }
+            BackgroundThrottlingPolicy::Disabled => taurino_core::wry::BackgroundThrottlingPolicy::Disabled,
+            BackgroundThrottlingPolicy::Suspend => taurino_core::wry::BackgroundThrottlingPolicy::Suspend,
+            BackgroundThrottlingPolicy::Throttle => taurino_core::wry::BackgroundThrottlingPolicy::Throttle,
         });
     }
 
@@ -197,9 +184,11 @@ pub(crate) fn create_webview(
     let window_label_for_dragdrop = window_options.label.clone();
     let webview_label_for_dragdrop = options.label.clone();
 
-    if window_options.enable_drag_drop {
+    if options.drag_drop_enabled {
         let _window_id_ = window_id.clone();
         let engine_manager = Arc::clone(&engine_manager);
+        // Wert herauskopieren, damit der Closure 'static ist
+        let window_enabled_drag_drop = window_options.enable_drag_drop;
         webview_builder = webview_builder.with_drag_drop_handler(move |event| {
             let event = match event {
                 WryDragDropEvent::Enter {
@@ -224,12 +213,14 @@ pub(crate) fn create_webview(
             };
 
             if !is_child {
-                engine_manager
-                    .emit_global_window_event(
-                        window_label_for_dragdrop.clone(),
-                        super::events::WindowEvent::DragDrop(event),
-                    )
-                    .unwrap();
+                if window_enabled_drag_drop {
+                    engine_manager
+                        .emit_global_window_event(
+                            window_label_for_dragdrop.clone(),
+                            super::events::WindowEvent::DragDrop(event),
+                        )
+                        .unwrap();
+                }
             } else {
                 engine_manager
                     .emit_global_webview_event(
@@ -297,9 +288,7 @@ pub(crate) fn create_webview(
                     let window_manager = match engine_manager.window() {
                         Ok(manager) => manager,
                         Err(error) => {
-                            eprintln!(
-                                "failed to lock WindowManager for new-window request: {error}"
-                            );
+                            eprintln!("failed to lock WindowManager for new-window request: {error}");
                             return taurino_core::wry::NewWindowResponse::Deny;
                         }
                     };
@@ -316,9 +305,7 @@ pub(crate) fn create_webview(
 
                     taurino_core::wry::NewWindowResponse::Create {
                         #[cfg(target_os = "macos")]
-                        webview: taurino_core::wry::WebViewExtMacOS::webview(&*webview)
-                            .as_super()
-                            .into(),
+                        webview: taurino_core::wry::WebViewExtMacOS::webview(&*webview).as_super().into(),
 
                         #[cfg(any(
                             target_os = "linux",
@@ -347,27 +334,23 @@ pub(crate) fn create_webview(
     {
         if let Some(policy) = options.web_content_process_terminate_policy.clone() {
             webview_builder = webview_builder.with_on_web_content_process_terminate_handler(
-                on_web_content_process_terminate_handler(
-                    engine_manager.clone(),
-                    window_id.clone(),
-                    id,
-                    policy,
-                ),
+                on_web_content_process_terminate_handler(engine_manager.clone(), window_id.clone(), id, policy),
             );
         }
     }
-    if let Some(_policy) = options.permission_request_policy.clone() {}
+    if let Some(_policy) = options.permission_request_policy.clone() {
+        webview_builder = webview_builder.with_permission_handler(move |kind| {
+            let kind = from_wry_permission_kind(kind);
+            let response = permission_request_handler(engine_manager.clone()).unwrap();
+            to_wry_permission_response(response(kind))
+        });
+    }
 
     if !options.url.is_about_blank() {
         webview_builder = webview_builder.with_url(options.url.to_string());
     }
     let webview = match options.child {
-        #[cfg(not(any(
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "android"
-        )))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
         true => {
             let vbox = window.default_vbox().ok_or_else(|| {
                 anyhow::anyhow!(
@@ -380,29 +363,14 @@ pub(crate) fn create_webview(
             webview_builder.build_gtk(vbox)
         }
 
-        #[cfg(any(
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "android"
-        ))]
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android"))]
         true => webview_builder.build_as_child(window),
 
         false => {
-            #[cfg(any(
-                target_os = "windows",
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "android"
-            ))]
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android"))]
             let builder = webview_builder.build(window);
 
-            #[cfg(not(any(
-                target_os = "windows",
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "android"
-            )))]
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
             let builder = {
                 let vbox = window.default_vbox().ok_or_else(|| {
                     anyhow::anyhow!(
@@ -431,10 +399,7 @@ pub(crate) fn create_webview(
         undecorated_resizing::attach_resize_handler(&webview);
         #[cfg(windows)]
         if window.is_resizable() && !window.is_decorated() {
-            undecorated_resizing::attach_resize_handler(
-                window.hwnd(),
-                window.has_undecorated_shadow(),
-            );
+            undecorated_resizing::attach_resize_handler(window.hwnd(), window.has_undecorated_shadow());
         }
     }
     let inner = Rc::new(webview);

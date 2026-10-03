@@ -381,3 +381,33 @@ pub fn attach_webview(
 
     Ok(id)
 }
+
+pub(super) fn from_wry_permission_kind(kind: taurino_core::wry::PermissionKind) -> PermissionKind {
+    match kind {
+        taurino_core::wry::PermissionKind::Microphone => PermissionKind::Microphone,
+        taurino_core::wry::PermissionKind::Camera => PermissionKind::Camera,
+        taurino_core::wry::PermissionKind::Geolocation => PermissionKind::Geolocation,
+        taurino_core::wry::PermissionKind::Notifications => PermissionKind::Notifications,
+        taurino_core::wry::PermissionKind::ClipboardRead => PermissionKind::ClipboardRead,
+        taurino_core::wry::PermissionKind::DisplayCapture => PermissionKind::DisplayCapture,
+        taurino_core::wry::PermissionKind::Midi => PermissionKind::Midi,
+        taurino_core::wry::PermissionKind::Sensors => PermissionKind::Sensors,
+        taurino_core::wry::PermissionKind::MediaKeySystemAccess => PermissionKind::MediaKeySystemAccess,
+        taurino_core::wry::PermissionKind::LocalFonts => PermissionKind::LocalFonts,
+        taurino_core::wry::PermissionKind::WindowManagement => PermissionKind::WindowManagement,
+        taurino_core::wry::PermissionKind::PointerLock => PermissionKind::PointerLock,
+        taurino_core::wry::PermissionKind::AutomaticDownloads => PermissionKind::AutomaticDownloads,
+        taurino_core::wry::PermissionKind::FileSystemAccess => PermissionKind::FileSystemAccess,
+        taurino_core::wry::PermissionKind::Autoplay => PermissionKind::Autoplay,
+        taurino_core::wry::PermissionKind::Other => PermissionKind::Other,
+        _ => PermissionKind::Other,
+    }
+}
+
+pub(super) fn to_wry_permission_response(response: PermissionResponse) -> taurino_core::wry::PermissionResponse {
+    match response {
+        PermissionResponse::Allow => taurino_core::wry::PermissionResponse::Allow,
+        PermissionResponse::Deny => taurino_core::wry::PermissionResponse::Deny,
+        PermissionResponse::Default => taurino_core::wry::PermissionResponse::Default,
+    }
+}

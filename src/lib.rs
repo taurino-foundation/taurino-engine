@@ -387,6 +387,7 @@ impl Engine {
         {
             manager.window()?.open_window(
                 &WindowOptions {
+                    enable_drag_drop: true,
                     webviews: vec![WebViewOptions {
                         // Configure this WebView as a child of the native
                         // Taurino window.
