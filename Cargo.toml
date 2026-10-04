@@ -1,0 +1,11 @@
+[package]
+name = "taurino-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+taurino-core = { version = "0.1.0", git = "https://github.com/taurino-foundation/taurino-core" }
+serde_with = "3.24.0"
+url = { version = "2.5.8",  features = ["serde"]}
+ctrlc = { version = "3.5.2", features = ["termination"] }
+anyhow ="1"

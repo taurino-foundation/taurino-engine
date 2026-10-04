@@ -1,0 +1,261 @@
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", tag = "type")]
+pub enum NavigationPolicy {
+    /// Allow every navigation.
+    AllowAll,
+
+    /// Deny every navigation.
+    DenyAll,
+
+    /// Only allow navigation to the same origin as the initial WebView URL.
+    SameOrigin,
+
+    /// Allow navigation only when one of the configured rules matches.
+    AllowList { rules: Vec<NavigationRule> },
+
+    /// Deny navigation when one of the configured rules matches.
+    BlockList { rules: Vec<NavigationRule> },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+pub struct NavigationRule {
+    /// Optional URL scheme, e.g. "https".
+    #[serde(default)]
+    pub scheme: Option<String>,
+
+    /// Hostname to match, e.g. "example.com".
+    pub host: String,
+
+    /// Optional port to match.
+    #[serde(default)]
+    pub port: Option<u16>,
+
+    /// Whether subdomains should be accepted.
+    ///
+    /// Example:
+    /// host = "example.com"
+    /// include_subdomains = true
+    ///
+    /// Matches:
+    /// - example.com
+    /// - api.example.com
+    /// - auth.api.example.com
+    #[serde(default)]
+    pub include_subdomains: bool,
+}
+
+impl NavigationPolicy {
+    pub fn allows(&self, initial_url: Option<&Url>, target_url: &Url) -> bool {
+        match self {
+            Self::AllowAll => true,
+
+            Self::DenyAll => false,
+
+            Self::SameOrigin => {
+                let Some(initial_url) = initial_url else {
+                    return false;
+                };
+
+                same_origin(initial_url, target_url)
+            }
+
+            Self::AllowList { rules } => rules.iter().any(|rule| rule.matches(target_url)),
+
+            Self::BlockList { rules } => !rules.iter().any(|rule| rule.matches(target_url)),
+        }
+    }
+}
+
+impl NavigationRule {
+    pub fn matches(&self, url: &Url) -> bool {
+        if let Some(expected_scheme) = &self.scheme {
+            if !url.scheme().eq_ignore_ascii_case(expected_scheme) {
+                return false;
+            }
+        }
+
+        let Some(actual_host) = url.host_str() else {
+            return false;
+        };
+
+        if !self.matches_host(actual_host) {
+            return false;
+        }
+
+        if let Some(expected_port) = self.port {
+            if url.port_or_known_default() != Some(expected_port) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn matches_host(&self, actual_host: &str) -> bool {
+        if actual_host.eq_ignore_ascii_case(&self.host) {
+            return true;
+        }
+
+        if !self.include_subdomains {
+            return false;
+        }
+
+        let actual_host = actual_host.to_ascii_lowercase();
+        let expected_host = self.host.to_ascii_lowercase();
+
+        actual_host.ends_with(&format!(".{expected_host}"))
+    }
+}
+
+fn same_origin(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme() && a.host_str() == b.host_str() && a.port_or_known_default() == b.port_or_known_default()
+}
+
+// ============================================================================
+// New window configuration
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", tag = "type")]
+pub enum NewWindowPolicy {
+    /// Let the WebView runtime handle the request normally.
+    Allow,
+
+    /// Reject every new-window request.
+    Deny,
+
+    /// Evaluate requests against configured rules.
+    Rules {
+        rules: Vec<NewWindowRule>,
+
+        #[serde(default)]
+        fallback: NewWindowAction,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+pub struct NewWindowRule {
+    /// Match condition.
+    pub request: NewWindowRequestMatcher,
+
+    /// Response returned when the request matches.
+    pub response: NewWindowAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", deny_unknown_fields)]
+pub struct NewWindowRequestMatcher {
+    /// Optional URL scheme, e.g. "https".
+    #[serde(default)]
+    pub scheme: Option<String>,
+
+    /// Optional host, e.g. "example.com".
+    #[serde(default)]
+    pub host: Option<String>,
+
+    /// Include subdomains when matching `host`.
+    #[serde(default)]
+    pub include_subdomains: bool,
+
+    /// Optional port.
+    #[serde(default)]
+    pub port: Option<u16>,
+
+    /// Optional path prefix.
+    #[serde(default)]
+    pub path_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(crate = "taurino_core::serde", rename_all = "camelCase", tag = "type")]
+pub enum NewWindowAction {
+    /// Allow WRY to create the requested window.
+    Allow,
+
+    /// Reject the request.
+    #[default]
+    Deny,
+
+    /// Create a new engine-controlled window using the supplied configuration.
+    Create { window: Box<WindowOptions> },
+}
+
+// ============================================================================
+// Matching
+// ============================================================================
+
+impl NewWindowRequestMatcher {
+    pub fn matches(&self, url: &Url) -> bool {
+        if let Some(expected_scheme) = &self.scheme {
+            if !url.scheme().eq_ignore_ascii_case(expected_scheme) {
+                return false;
+            }
+        }
+
+        if let Some(expected_host) = &self.host {
+            let Some(actual_host) = url.host_str() else {
+                return false;
+            };
+
+            if !host_matches(actual_host, expected_host, self.include_subdomains) {
+                return false;
+            }
+        }
+
+        if let Some(expected_port) = self.port {
+            if url.port_or_known_default() != Some(expected_port) {
+                return false;
+            }
+        }
+
+        if let Some(path_prefix) = &self.path_prefix {
+            if !url.path().starts_with(path_prefix) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+fn host_matches(actual: &str, expected: &str, include_subdomains: bool) -> bool {
+    if actual.eq_ignore_ascii_case(expected) {
+        return true;
+    }
+
+    if !include_subdomains {
+        return false;
+    }
+
+    let actual = actual.to_ascii_lowercase();
+    let expected = expected.to_ascii_lowercase();
+
+    actual.ends_with(&format!(".{expected}"))
+}
+
+// ============================================================================
+// Policy evaluation
+// ============================================================================
+
+impl NewWindowPolicy {
+    pub fn evaluate(&self, url: &Url) -> NewWindowAction {
+        match self {
+            Self::Allow => NewWindowAction::Allow,
+
+            Self::Deny => NewWindowAction::Deny,
+
+            Self::Rules { rules, fallback } => {
+                for rule in rules {
+                    if rule.request.matches(url) {
+                        return rule.response.clone();
+                    }
+                }
+
+                fallback.clone()
+            }
+        }
+    }
+}
