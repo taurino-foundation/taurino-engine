@@ -85,8 +85,10 @@ pub(crate) fn create_webview(
     window: &taurino_core::native::tao::window::Window,
     #[cfg(windows)] focused_webview: ArcMut<FocusState>,
 ) -> Result<WebView> {
-    let proxy = engine_manager.proxy.clone();
-    let browser_context = engine_manager.webcontext()?;
+    let manager = engine_manager.clone();
+    let proxy = manager.proxy.clone();
+
+    let browser_context = manager.webcontext()?;
     let mut web_context = lock_state(&browser_context, "browser_context")?;
     let is_first_context = web_context.is_empty();
     // the context must be stored on the HashMap because it must outlive the WebView on macOS
@@ -109,6 +111,7 @@ pub(crate) fn create_webview(
             })
         }
     };
+
     let mut webview_builder = WebViewBuilder::new_with_web_context(&mut web_context.inner)
         .with_id(&options.label)
         .with_focused(window_options.focus)
@@ -118,14 +121,7 @@ pub(crate) fn create_webview(
         .with_clipboard(options.enable_clipboard_access)
         .with_hotkeys_zoom(options.zoom_hotkeys_enabled)
         .with_general_autofill_enabled(options.general_autofill_enabled);
-    #[cfg(any(target_os = "windows", target_os = "android"))]
-    {
-        #[cfg(target_os = "android")]
-        use taurino_core::native::wry::WebViewBuilderExtAndroid;
-        #[cfg(windows)]
-        use taurino_core::native::wry::WebViewBuilderExtWindows;
-        webview_builder = webview_builder.with_https_scheme(options.use_https_scheme);
-    }
+
     if let Some(background_throttling) = &options.background_throttling {
         webview_builder = webview_builder.with_background_throttling(match background_throttling {
             BackgroundThrottlingPolicy::Disabled => taurino_core::native::wry::BackgroundThrottlingPolicy::Disabled,
@@ -143,7 +139,7 @@ pub(crate) fn create_webview(
     let child = options.child;
     if options.drag_drop_enabled {
         let _window_id_ = window_id.clone();
-        let engine_manager = Arc::clone(&engine_manager);
+        let engine_manager = manager.clone();
         // Wert herauskopieren, damit der Closure 'static ist
         let window_enabled_drag_drop = window_options.enable_drag_drop;
         webview_builder = webview_builder.with_drag_drop_handler(move |event| {
@@ -196,7 +192,7 @@ pub(crate) fn create_webview(
         });
     }
     if let Some(policy) = options.new_window_policy.clone() {
-        let engine_manager = Arc::clone(&engine_manager);
+        let engine_manager = manager.clone();
         webview_builder = webview_builder.with_new_window_req_handler(move |raw_url, features| {
             let Ok(url) = raw_url.parse::<Url>() else {
                 return taurino_core::native::wry::NewWindowResponse::Deny;
@@ -215,12 +211,13 @@ pub(crate) fn create_webview(
                         target_configuration: features.opener.target_configuration,
                     },
                 ),
-                Arc::clone(&engine_manager),
+                engine_manager.clone(),
             );
             match response {
                 Ok(NewWindowResponse::Allow) => taurino_core::native::wry::NewWindowResponse::Allow,
                 Ok(NewWindowResponse::Create { window_id }) => {
-                    let window_manager = match engine_manager.window() {
+                    let manager = engine_manager.clone();
+                    let window_manager = match manager.window() {
                         Ok(manager) => manager,
                         Err(error) => {
                             eprintln!("failed to lock WindowManager for new-window request: {error}");
@@ -262,14 +259,14 @@ pub(crate) fn create_webview(
     {
         if let Some(policy) = options.web_content_process_terminate_policy.clone() {
             webview_builder = webview_builder.with_on_web_content_process_terminate_handler(
-                on_web_content_process_terminate_handler(engine_manager.clone(), window_id.clone(), id, policy),
+                on_web_content_process_terminate_handler(manager.clone(), window_id.clone(), id, policy),
             );
         }
     }
     if let Some(_policy) = options.permission_request_policy.clone() {
         webview_builder = webview_builder.with_permission_handler(move |kind| {
             let kind = from_wry_permission_kind(kind);
-            let response = permission_request_handler(engine_manager.clone()).unwrap();
+            let response = permission_request_handler(manager.clone()).unwrap();
             to_wry_permission_response(response(kind))
         });
     }
@@ -307,9 +304,11 @@ pub(crate) fn create_webview(
             None
         }
     };
-    if !options.url.is_about_blank() {
-        webview_builder = webview_builder.with_url(options.url.to_string());
-    }
+    let webview_builder =
+        engine_manager
+            .clone()
+            .connection()?
+            .apply(webview_builder, &options.url, options.use_https_scheme)?;
     let webview = match child {
         #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
         true => {

@@ -79,11 +79,7 @@ impl EngineEventHandler {
                  *
                  * This arm must come before the generic UserEvent arm.
                  */
-                Event::UserEvent(EventLoopMessage::SynthesizedWindowEvent(
-                    window_id,
-                    _webview_id,
-                    event,
-                )) => {
+                Event::UserEvent(EventLoopMessage::SynthesizedWindowEvent(window_id, _webview_id, event)) => {
                     self.handle_synthesized_window_event(window_id, event)?;
                 }
 
@@ -100,9 +96,7 @@ impl EngineEventHandler {
                 /*
                  * Native Tao window events.
                  */
-                Event::WindowEvent {
-                    event, window_id, ..
-                } => {
+                Event::WindowEvent { event, window_id, .. } => {
                     self.handle_window_event(event, window_id, control_flow)?;
                 }
 
@@ -139,11 +133,7 @@ impl EngineEventHandler {
     ///     -> `WindowEventWrapper::from(...)`
     ///     -> public `WindowEvent`
     ///     -> global window event handler
-    fn handle_synthesized_window_event(
-        &self,
-        window_id: WindowId,
-        event: SynthesizedWindowEvent,
-    ) -> Result<()> {
+    fn handle_synthesized_window_event(&self, window_id: WindowId, event: SynthesizedWindowEvent) -> Result<()> {
         let Some(event) = WindowEventWrapper::from(event).0 else {
             return Ok(());
         };
@@ -155,9 +145,9 @@ impl EngineEventHandler {
         let window_label = {
             let window_manager = self.manager.window()?;
 
-            let window = window_manager.get_by_id(window_id).ok_or_else(|| {
-                anyhow!("window with id {window_id:?} not found for synthesized window event")
-            })?;
+            let window = window_manager
+                .get_by_id(window_id)
+                .ok_or_else(|| anyhow!("window with id {window_id:?} not found for synthesized window event"))?;
 
             window.label.clone()
         };
@@ -174,25 +164,20 @@ impl EngineEventHandler {
     ///
     /// Unlike synthesized window events, WebView events are not converted
     /// through `WindowEventWrapper`. They remain `WebViewEvent` values.
-    fn handle_webview_event(
-        &self,
-        window_id: WindowId,
-        webview_id: WebViewId,
-        event: WebViewEvent,
-    ) -> Result<()> {
+    fn handle_webview_event(&self, window_id: WindowId, webview_id: WebViewId, event: WebViewEvent) -> Result<()> {
         /*
          * Resolve labels while holding the WindowManager lock only briefly.
          */
         let (window_label, webview_label) = {
             let window_manager = self.manager.window()?;
 
-            let window = window_manager.get_by_id(window_id).ok_or_else(|| {
-                anyhow!("window with id {window_id:?} not found for WebView event")
-            })?;
+            let window = window_manager
+                .get_by_id(window_id)
+                .ok_or_else(|| anyhow!("window with id {window_id:?} not found for WebView event"))?;
 
-            let webview = window.webview(webview_id).ok_or_else(|| {
-                anyhow!("WebView with id {webview_id:?} not found in window {window_id:?}")
-            })?;
+            let webview = window
+                .webview(webview_id)
+                .ok_or_else(|| anyhow!("WebView with id {webview_id:?} not found in window {window_id:?}"))?;
 
             (window.label.clone(), webview.label().to_owned())
         };
@@ -301,18 +286,13 @@ impl EngineEventHandler {
             (window.label.clone(), mapped_event)
         };
 
-        self.manager
-            .emit_global_window_event(window_label, mapped_event)?;
+        self.manager.emit_global_window_event(window_label, mapped_event)?;
 
         Ok(())
     }
 
     /// Handles a native close request.
-    fn handle_close_requested(
-        &self,
-        window_id: TaoWindowId,
-        control_flow: &mut ControlFlow,
-    ) -> Result<()> {
+    fn handle_close_requested(&self, window_id: TaoWindowId, control_flow: &mut ControlFlow) -> Result<()> {
         let window_label = {
             let window_manager = self.manager.window()?;
 
@@ -334,11 +314,7 @@ impl EngineEventHandler {
     }
 
     /// Handles Tao's final native destruction notification.
-    fn handle_window_destroyed(
-        &self,
-        window_id: TaoWindowId,
-        control_flow: &mut ControlFlow,
-    ) -> Result<()> {
+    fn handle_window_destroyed(&self, window_id: TaoWindowId, control_flow: &mut ControlFlow) -> Result<()> {
         /*
          * The window may already have been removed when CloseRequested was
          * handled. In that case Tao is only confirming destruction.
@@ -367,12 +343,7 @@ impl EngineEventHandler {
     }
 
     /// Removes a window and releases its associated resources.
-    fn close_window(
-        &self,
-        window_id: TaoWindowId,
-        window_label: &str,
-        control_flow: &mut ControlFlow,
-    ) -> Result<()> {
+    fn close_window(&self, window_id: TaoWindowId, window_label: &str, control_flow: &mut ControlFlow) -> Result<()> {
         let removed_window = {
             let mut window_manager = self.manager.window()?;
             window_manager.remove_by_tao_id(window_id)
@@ -438,10 +409,7 @@ impl EngineEventHandler {
         let window_labels = {
             let mut window_manager = self.manager.window()?;
 
-            let labels = window_manager
-                .labels()
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
+            let labels = window_manager.labels().map(str::to_owned).collect::<Vec<_>>();
 
             window_manager.clear();
 

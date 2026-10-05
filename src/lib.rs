@@ -46,6 +46,7 @@ mod window;
 
 use taurino_core::{
     EngineLoop, EngineLoopBuilder, EventLoopMessage, WebContextStore,
+    aio::IPCRuntime,
     core::resources::ResourceTable,
     menu::MenuManager,
     schema::{
@@ -170,6 +171,8 @@ pub struct Engine {
     /// It is reference counted because individual subsystems and callbacks may
     /// need to retain access to the engine state independently.
     manager: Arc<EngineManager>,
+    config: taurino_core::config::Config,
+    ipc_runtime: Arc<IPCRuntime>,
 }
 
 impl Engine {
@@ -218,6 +221,26 @@ impl Engine {
     /// failure to install the process handler causes process termination rather
     /// than being returned through this method.
     pub fn new() -> anyhow::Result<Self> {
+        let mut config = taurino_core::config::Config::new("")?;
+        config.add_window_config(WindowConfig {
+            // center: true,
+            enable_drag_drop: true,
+            webviews: vec![WebViewConfig {
+                drag_drop_enabled: true,
+                // Configure this WebView as a child of the native
+                // Taurino window.
+
+                // Load an external HTTPS resource.
+                url: WebviewUrl::default(),
+
+                // Preserve subsystem defaults for all options that
+                // are not explicitly required here.
+                ..Default::default()
+            }],
+
+            ..Default::default()
+        });
+
         // ---------------------------------------------------------------------
         // Shared WebView runtime
         // ---------------------------------------------------------------------
@@ -294,13 +317,23 @@ impl Engine {
         //
         // EngineManager receives the globally shared runtime components and
         // constructs the subsystem managers around them.
-        let manager = EngineManager::new(webcontext.clone(), resource_table.clone(), menu_manager, proxy)?;
+        let ipc_runtime = IPCRuntime::new(&config, proxy.clone())?;
+        let manager = EngineManager::new(
+            ipc_runtime.clone(),
+            webcontext.clone(),
+            resource_table.clone(),
+            menu_manager,
+            proxy,
+            config.clone(),
+        )?;
 
         Ok(Self {
             webcontext,
             event_loop,
             manager,
             table: resource_table,
+            config,
+            ipc_runtime,
         })
     }
 
@@ -387,27 +420,11 @@ impl Engine {
         //
         // Window creation is performed before entering Tao's event loop because
         // the initial runtime target is already available through `event_loop`.
-        {
-            manager.window()?.open_window(
-                &WindowConfig {
-                    enable_drag_drop: true,
-                    webviews: vec![WebViewConfig {
-                        drag_drop_enabled: true,
-                        // Configure this WebView as a child of the native
-                        // Taurino window.
 
-                        // Load an external HTTPS resource.
-                        url: WebviewUrl::External(Url::parse("https://nextjs.org")?),
-
-                        // Preserve subsystem defaults for all options that
-                        // are not explicitly required here.
-                        ..Default::default()
-                    }],
-
-                    ..Default::default()
-                },
-                &self.event_loop,
-            )?;
+        for window in self.config.get_windows() {
+            if window.create {
+                manager.window()?.open_window(window, &self.event_loop)?;
+            }
         }
 
         // ---------------------------------------------------------------------

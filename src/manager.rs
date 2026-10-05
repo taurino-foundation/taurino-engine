@@ -50,6 +50,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use anyhow::{Result, anyhow};
 use taurino_core::{
     EngineLoopClosed, EngineLoopProxy, EventLoopMessage, WebContextStore,
+    aio::IPCRuntime,
     core::resources::ResourceTable,
     lock,
     menu::MenuManager,
@@ -122,6 +123,8 @@ pub struct EngineManager {
     _global_webview_event_handler: Mutex<Option<WebViewEventHandler>>,
 
     pub(crate) proxy: EngineLoopProxy,
+    config: taurino_core::config::Config,
+    ipc_runtime: Arc<IPCRuntime>,
 }
 
 impl EngineManager {
@@ -130,10 +133,12 @@ impl EngineManager {
     /// The newly created manager is automatically bound to the tray icon and
     /// window managers so that they can access the common engine state.
     pub fn new(
+        ipc_runtime: Arc<IPCRuntime>,
         webcontext: WebContextStore,
         resource_table: ArcMut<ResourceTable>,
         menu_manager: ArcMut<MenuManager>,
         proxy: EngineLoopProxy,
+        config: taurino_core::config::Config,
     ) -> Result<Arc<Self>> {
         let trayicon_manager = TrayIconManager::new()?;
         let window_manager = WindowManager::new()?;
@@ -147,6 +152,8 @@ impl EngineManager {
             _global_window_event_handler: Mutex::new(None),
             _global_webview_event_handler: Mutex::new(None),
             proxy,
+            config,
+            ipc_runtime,
         });
 
         lock_state(&trayicon_manager, "TrayIconManager")?.bind_manager(manager.clone());
@@ -163,7 +170,12 @@ impl EngineManager {
     pub fn webcontext(self: &Arc<Self>) -> Result<WebContextStore> {
         Ok(self._webcontext.clone())
     }
-
+    pub fn config(self: &Arc<Self>) -> Result<taurino_core::config::Config> {
+        Ok(self.config.clone())
+    }
+    pub fn connection(self: &Arc<Self>) -> Result<Arc<IPCRuntime>> {
+        Ok(self.ipc_runtime.clone())
+    }
     pub fn proxy_emitter(self: &Arc<Self>, message: EventLoopMessage) -> Result<(), EngineLoopClosed> {
         Ok(self.proxy.send_event(message)?)
     }
