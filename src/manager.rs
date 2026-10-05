@@ -49,13 +49,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{Result, anyhow};
 use taurino_core::{
-    EngineLoopClosed, EngineLoopProxy, EventLoopMessage, WebContextStore,
-    aio::IPCRuntime,
-    core::resources::ResourceTable,
-    lock,
-    menu::MenuManager,
-    schema::event::{WebViewEvent, WindowEvent},
-    utils::{ArcMut, lock_state},
+  EngineLoopClosed, EngineLoopProxy, EventLoopMessage, WebContextStore,
+  aio::IPCRuntime,
+  core::resources::ResourceTable,
+  lock,
+  menu::MenuManager,
+  schema::event::{WebViewEvent, WindowEvent},
+  utils::{ArcMut, lock_state},
 };
 
 use crate::{trayicon::TrayIconManager, window::WindowManager};
@@ -75,7 +75,8 @@ use crate::{trayicon::TrayIconManager, window::WindowManager};
 ///
 /// `event` is currently represented as a string slice. It may be
 /// replaced by a dedicated event enum once the window event API is finalized.
-pub type WindowEventHandler = Box<dyn Fn(Arc<EngineManager>, String, WindowEvent) + Send + Sync + 'static>;
+pub type WindowEventHandler =
+  Box<dyn Fn(Arc<EngineManager>, String, WindowEvent) + Send + Sync + 'static>;
 
 /// Callback invoked for global WebView events.
 ///
@@ -94,261 +95,229 @@ pub type WindowEventHandler = Box<dyn Fn(Arc<EngineManager>, String, WindowEvent
 ///
 /// `event` is currently represented as a string slice. It may be
 /// replaced by a dedicated event enum once the WebView event API is finalized.
-pub type WebViewEventHandler = Box<dyn Fn(Arc<EngineManager>, String, String, WebViewEvent) + Send + Sync + 'static>;
+pub type WebViewEventHandler =
+  Box<dyn Fn(Arc<EngineManager>, String, String, WebViewEvent) + Send + Sync + 'static>;
 
 /// Provides access to the engine's shared managers and global event handlers.
 ///
 /// `EngineManager` acts as the central shared state container of the engine.
 /// Instances are intended to be shared through [`Arc`].
 pub struct EngineManager {
-    /// Shared WebView context store.
-    _webcontext: WebContextStore,
+  /// Shared WebView context store.
+  _webcontext: WebContextStore,
 
-    /// Shared application resource table.
-    _resource_table: ArcMut<ResourceTable>,
+  /// Shared application resource table.
+  _resource_table: ArcMut<ResourceTable>,
 
-    /// Shared menu manager.
-    _menu_manager: ArcMut<MenuManager>,
+  /// Shared menu manager.
+  _menu_manager: ArcMut<MenuManager>,
 
-    /// Shared tray icon manager.
-    _trayicon_manager: ArcMut<TrayIconManager>,
+  /// Shared tray icon manager.
+  _trayicon_manager: ArcMut<TrayIconManager>,
 
-    /// Shared window manager.
-    _window_manager: ArcMut<WindowManager>,
+  /// Shared window manager.
+  _window_manager: ArcMut<WindowManager>,
 
-    /// Optional global handler invoked for window events.
-    _global_window_event_handler: Mutex<Option<WindowEventHandler>>,
+  /// Optional global handler invoked for window events.
+  _global_window_event_handler: Mutex<Option<WindowEventHandler>>,
 
-    /// Optional global handler invoked for WebView events.
-    _global_webview_event_handler: Mutex<Option<WebViewEventHandler>>,
+  /// Optional global handler invoked for WebView events.
+  _global_webview_event_handler: Mutex<Option<WebViewEventHandler>>,
 
-    pub(crate) proxy: EngineLoopProxy,
-    config: taurino_core::config::Config,
-    ipc_runtime: Arc<IPCRuntime>,
+  pub(crate) proxy: EngineLoopProxy,
+  config: taurino_core::config::Config,
+  ipc_runtime: Arc<IPCRuntime>,
 }
 
 impl EngineManager {
-    /// Creates and initializes a new shared engine manager.
-    ///
-    /// The newly created manager is automatically bound to the tray icon and
-    /// window managers so that they can access the common engine state.
-    pub fn new(
-        ipc_runtime: Arc<IPCRuntime>,
-        webcontext: WebContextStore,
-        resource_table: ArcMut<ResourceTable>,
-        menu_manager: ArcMut<MenuManager>,
-        proxy: EngineLoopProxy,
-        config: taurino_core::config::Config,
-    ) -> Result<Arc<Self>> {
-        let trayicon_manager = TrayIconManager::new()?;
-        let window_manager = WindowManager::new()?;
+  /// Creates and initializes a new shared engine manager.
+  ///
+  /// The newly created manager is automatically bound to the tray icon and
+  /// window managers so that they can access the common engine state.
+  pub fn new(
+    ipc_runtime: Arc<IPCRuntime>,
+    webcontext: WebContextStore,
+    resource_table: ArcMut<ResourceTable>,
+    menu_manager: ArcMut<MenuManager>,
+    proxy: EngineLoopProxy,
+    config: taurino_core::config::Config,
+  ) -> Result<Arc<Self>> {
+    let trayicon_manager = TrayIconManager::new()?;
+    let window_manager = WindowManager::new()?;
 
-        let manager = Arc::new(Self {
-            _webcontext: webcontext,
-            _resource_table: resource_table,
-            _menu_manager: menu_manager,
-            _trayicon_manager: trayicon_manager.clone(),
-            _window_manager: window_manager.clone(),
-            _global_window_event_handler: Mutex::new(None),
-            _global_webview_event_handler: Mutex::new(None),
-            proxy,
-            config,
-            ipc_runtime,
-        });
+    let manager = Arc::new(Self {
+      _webcontext: webcontext,
+      _resource_table: resource_table,
+      _menu_manager: menu_manager,
+      _trayicon_manager: trayicon_manager.clone(),
+      _window_manager: window_manager.clone(),
+      _global_window_event_handler: Mutex::new(None),
+      _global_webview_event_handler: Mutex::new(None),
+      proxy,
+      config,
+      ipc_runtime,
+    });
 
-        lock_state(&trayicon_manager, "TrayIconManager")?.bind_manager(manager.clone());
-        lock_state(&window_manager, "WindowManager")?.bind_manager(manager.clone());
+    lock_state(&trayicon_manager, "TrayIconManager")?.bind_manager(manager.clone());
+    lock_state(&window_manager, "WindowManager")?.bind_manager(manager.clone());
 
-        Ok(manager)
+    Ok(manager)
+  }
+
+  // =========================================================================
+  // Web context
+  // =========================================================================
+
+  /// Returns the shared WebView context store.
+  pub fn webcontext(self: &Arc<Self>) -> Result<WebContextStore> {
+    Ok(self._webcontext.clone())
+  }
+  pub fn config(self: &Arc<Self>) -> Result<taurino_core::config::Config> {
+    Ok(self.config.clone())
+  }
+  pub fn connection(self: &Arc<Self>) -> Result<Arc<IPCRuntime>> {
+    Ok(self.ipc_runtime.clone())
+  }
+  pub fn proxy_emitter(
+    self: &Arc<Self>,
+    message: EventLoopMessage,
+  ) -> Result<(), EngineLoopClosed> {
+    Ok(self.proxy.send_event(message)?)
+  }
+
+  // =========================================================================
+  // Global window events
+  // =========================================================================
+
+  /// Registers the global window event handler.
+  ///
+  /// Any previously registered handler is replaced.
+  pub fn set_global_window_event_handler<F>(self: &Arc<Self>, handler: F) -> Result<()>
+  where
+    F: Fn(Arc<EngineManager>, String, WindowEvent) + Send + Sync + 'static,
+  {
+    let mut global_handler = self
+      ._global_window_event_handler
+      .lock()
+      .map_err(|_| anyhow!("global window event handler mutex is poisoned"))?;
+
+    *global_handler = Some(Box::new(handler));
+
+    Ok(())
+  }
+
+  /// Removes the currently registered global window event handler.
+  pub fn _clear_global_window_event_handler(self: &Arc<Self>) -> Result<()> {
+    let mut global_handler = self
+      ._global_window_event_handler
+      .lock()
+      .map_err(|_| anyhow!("global window event handler mutex is poisoned"))?;
+
+    *global_handler = None;
+
+    Ok(())
+  }
+
+  /// Emits an event to the registered global window event handler.
+  ///
+  /// If no handler is registered, this method performs no action.
+  pub fn emit_global_window_event(
+    self: &Arc<Self>,
+    window_label: impl Into<String>,
+    event: WindowEvent,
+  ) -> Result<()> {
+    let handler = self
+      ._global_window_event_handler
+      .lock()
+      .map_err(|_| anyhow!("global window event handler mutex is poisoned"))?;
+
+    if let Some(handler) = handler.as_ref() {
+      handler(self.clone(), window_label.into(), event); // <- Callback läuft MIT gehaltenem Lock!
     }
 
-    // =========================================================================
-    // Web context
-    // =========================================================================
+    Ok(())
+  }
 
-    /// Returns the shared WebView context store.
-    pub fn webcontext(self: &Arc<Self>) -> Result<WebContextStore> {
-        Ok(self._webcontext.clone())
-    }
-    pub fn config(self: &Arc<Self>) -> Result<taurino_core::config::Config> {
-        Ok(self.config.clone())
-    }
-    pub fn connection(self: &Arc<Self>) -> Result<Arc<IPCRuntime>> {
-        Ok(self.ipc_runtime.clone())
-    }
-    pub fn proxy_emitter(self: &Arc<Self>, message: EventLoopMessage) -> Result<(), EngineLoopClosed> {
-        Ok(self.proxy.send_event(message)?)
-    }
+  // =========================================================================
+  // Global WebView events
+  // =========================================================================
 
-    // =========================================================================
-    // Global window events
-    // =========================================================================
+  /// Registers the global WebView event handler.
+  ///
+  /// Any previously registered handler is replaced.
+  pub fn set_global_webview_event_handler<F>(self: &Arc<Self>, handler: F) -> Result<()>
+  where
+    F: Fn(Arc<EngineManager>, String, String, WebViewEvent) + Send + Sync + 'static,
+  {
+    let mut global_handler = self
+      ._global_webview_event_handler
+      .lock()
+      .map_err(|_| anyhow!("global WebView event handler mutex is poisoned"))?;
 
-    /// Registers the global window event handler.
-    ///
-    /// Any previously registered handler is replaced.
-    pub fn set_global_window_event_handler<F>(self: &Arc<Self>, handler: F) -> Result<()>
-    where
-        F: Fn(Arc<EngineManager>, String, WindowEvent) + Send + Sync + 'static,
-    {
-        let mut global_handler = self
-            ._global_window_event_handler
-            .lock()
-            .map_err(|_| anyhow!("global window event handler mutex is poisoned"))?;
+    *global_handler = Some(Box::new(handler));
 
-        *global_handler = Some(Box::new(handler));
+    Ok(())
+  }
 
-        Ok(())
-    }
+  /// Removes the currently registered global WebView event handler.
+  pub fn _clear_global_webview_event_handler(self: &Arc<Self>) -> Result<()> {
+    let mut global_handler = self
+      ._global_webview_event_handler
+      .lock()
+      .map_err(|_| anyhow!("global WebView event handler mutex is poisoned"))?;
 
-    /// Removes the currently registered global window event handler.
-    pub fn _clear_global_window_event_handler(self: &Arc<Self>) -> Result<()> {
-        let mut global_handler = self
-            ._global_window_event_handler
-            .lock()
-            .map_err(|_| anyhow!("global window event handler mutex is poisoned"))?;
+    *global_handler = None;
 
-        *global_handler = None;
+    Ok(())
+  }
 
-        Ok(())
-    }
+  /// Emits an event to the registered global WebView event handler.
+  ///
+  /// If no handler is registered, this method performs no action.
+  pub fn emit_global_webview_event(
+    self: &Arc<Self>,
+    window_label: impl Into<String>,
+    webview_label: impl Into<String>,
+    event: WebViewEvent,
+  ) -> Result<()> {
+    let handler = self
+      ._global_webview_event_handler
+      .lock()
+      .map_err(|_| anyhow!("global WebView event handler mutex is poisoned"))?;
 
-    /// Emits an event to the registered global window event handler.
-    ///
-    /// If no handler is registered, this method performs no action.
-    pub fn emit_global_window_event(
-        self: &Arc<Self>,
-        window_label: impl Into<String>,
-        event: WindowEvent,
-    ) -> Result<()> {
-        let handler = self
-            ._global_window_event_handler
-            .lock()
-            .map_err(|_| anyhow!("global window event handler mutex is poisoned"))?;
-
-        if let Some(handler) = handler.as_ref() {
-            handler(self.clone(), window_label.into(), event); // <- Callback läuft MIT gehaltenem Lock!
-        }
-
-        Ok(())
+    if let Some(handler) = handler.as_ref() {
+      handler(
+        self.clone(),
+        window_label.into(),
+        webview_label.into(),
+        event,
+      );
     }
 
-    // =========================================================================
-    // Global WebView events
-    // =========================================================================
+    Ok(())
+  }
 
-    /// Registers the global WebView event handler.
-    ///
-    /// Any previously registered handler is replaced.
-    pub fn set_global_webview_event_handler<F>(self: &Arc<Self>, handler: F) -> Result<()>
-    where
-        F: Fn(Arc<EngineManager>, String, String, WebViewEvent) + Send + Sync + 'static,
-    {
-        let mut global_handler = self
-            ._global_webview_event_handler
-            .lock()
-            .map_err(|_| anyhow!("global WebView event handler mutex is poisoned"))?;
+  // =========================================================================
+  // Shared managers
+  // =========================================================================
 
-        *global_handler = Some(Box::new(handler));
+  /// Locks and returns the shared resource table.
+  pub fn _resource_table(self: &Arc<Self>) -> Result<MutexGuard<'_, ResourceTable>> {
+    lock!(self._resource_table)
+  }
 
-        Ok(())
-    }
+  /// Locks and returns the shared menu manager.
+  pub fn menu(self: &Arc<Self>) -> Result<MutexGuard<'_, MenuManager>> {
+    lock!(self._menu_manager)
+  }
 
-    /// Removes the currently registered global WebView event handler.
-    pub fn _clear_global_webview_event_handler(self: &Arc<Self>) -> Result<()> {
-        let mut global_handler = self
-            ._global_webview_event_handler
-            .lock()
-            .map_err(|_| anyhow!("global WebView event handler mutex is poisoned"))?;
+  /// Locks and returns the shared tray icon manager.
+  pub fn _trayicon(self: &Arc<Self>) -> Result<MutexGuard<'_, TrayIconManager>> {
+    lock!(self._trayicon_manager)
+  }
 
-        *global_handler = None;
-
-        Ok(())
-    }
-
-    /// Emits an event to the registered global WebView event handler.
-    ///
-    /// If no handler is registered, this method performs no action.
-    pub fn emit_global_webview_event(
-        self: &Arc<Self>,
-        window_label: impl Into<String>,
-        webview_label: impl Into<String>,
-        event: WebViewEvent,
-    ) -> Result<()> {
-        let handler = self
-            ._global_webview_event_handler
-            .lock()
-            .map_err(|_| anyhow!("global WebView event handler mutex is poisoned"))?;
-
-        if let Some(handler) = handler.as_ref() {
-            handler(self.clone(), window_label.into(), webview_label.into(), event);
-        }
-
-        Ok(())
-    }
-
-    // =========================================================================
-    // Shared managers
-    // =========================================================================
-
-    /// Locks and returns the shared resource table.
-    pub fn _resource_table(self: &Arc<Self>) -> Result<MutexGuard<'_, ResourceTable>> {
-        lock!(self._resource_table)
-    }
-
-    /// Locks and returns the shared menu manager.
-    pub fn menu(self: &Arc<Self>) -> Result<MutexGuard<'_, MenuManager>> {
-        lock!(self._menu_manager)
-    }
-
-    /// Locks and returns the shared tray icon manager.
-    pub fn _trayicon(self: &Arc<Self>) -> Result<MutexGuard<'_, TrayIconManager>> {
-        lock!(self._trayicon_manager)
-    }
-
-    /// Locks and returns the shared window manager.
-    pub fn window(self: &Arc<Self>) -> Result<MutexGuard<'_, WindowManager>> {
-        lock!(self._window_manager)
-    }
+  /// Locks and returns the shared window manager.
+  pub fn window(self: &Arc<Self>) -> Result<MutexGuard<'_, WindowManager>> {
+    lock!(self._window_manager)
+  }
 }
-
-/*
-setter
-
-
-engine_manager.set_global_window_event_handler(
-    |manager, window_label, event| {
-        println!(
-            "Window `{window_label}` emitted: {event}"
-        );
-    },
-)?;
-engine_manager.set_global_webview_event_handler(
-    |manager, window_label, webview_label, event| {
-        println!(
-            "WebView `{webview_label}` in window `{window_label}` emitted: {event}"
-        );
-    },
-)?;
-
-*/
-
-/*
-emitter
-
-
-engine_manager.emit_global_window_event(
-    "main",
-    "focused",
-)?;
-
-
-engine_manager.emit_global_webview_event(
-    "main",
-    "root",
-    "navigation",
-)?;
-
-
-
-*/
