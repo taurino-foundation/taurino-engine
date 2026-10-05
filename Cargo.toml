@@ -9,3 +9,38 @@ serde_with = "3.24.0"
 url = { version = "2.5.8",  features = ["serde"]}
 ctrlc = { version = "3.5.2", features = ["termination"] }
 anyhow ="1"
+
+
+# Standard-Release-Profil: klein & optimiert
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+incremental = false
+opt-level = "s"
+strip = true
+
+# Dev-Profil-Anpassung für schnellere Build-Tools
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+# Aggressiveres Profil für maximale Größenreduktion
+[profile.release-size-optimized]
+inherits = "release"
+opt-level = "z"
+codegen-units = 1
+lto = "fat"
+incremental = false
+panic = "abort"
+strip = "symbols"
+
+# [workspace.lints.rust]
+# unsafe_code = "warn"
+# missing_docs = "warn"
+
+[workspace.lints.clippy]
+collapsible_if = "allow"
+
+redundant_clone = "warn"
+assigning_clones = "warn"
+or_fun_call = "warn"

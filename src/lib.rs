@@ -240,7 +240,25 @@ impl Engine {
 
             ..Default::default()
         });
+        config.add_window_config(WindowConfig {
+            // center: true,
+            label: "sub:window".to_string(),
+            enable_drag_drop: true,
+            webviews: vec![WebViewConfig {
+                drag_drop_enabled: true,
+                // Configure this WebView as a child of the native
+                // Taurino window.
 
+                // Load an external HTTPS resource.
+                url: WebviewUrl::default(),
+
+                // Preserve subsystem defaults for all options that
+                // are not explicitly required here.
+                ..Default::default()
+            }],
+
+            ..Default::default()
+        });
         // ---------------------------------------------------------------------
         // Shared WebView runtime
         // ---------------------------------------------------------------------
@@ -406,13 +424,15 @@ impl Engine {
         //
         // Similar to window events, WebView events are forwarded through one
         // engine-wide callback.
-        manager.set_global_webview_event_handler(|_manager, window_label, webview_label, event| {
-            println!(
-                "WebView `{webview_label}` in window \
+        manager.set_global_webview_event_handler(
+            |_manager, window_label, webview_label, event| {
+                println!(
+                    "WebView `{webview_label}` in window \
                      `{window_label}` emitted: {:?}",
-                event
-            );
-        })?;
+                    event
+                );
+            },
+        )?;
 
         // ---------------------------------------------------------------------
         // Initial application window
