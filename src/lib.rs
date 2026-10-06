@@ -46,7 +46,7 @@ use anyhow::Result;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use anyhow::anyhow;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use taurino_core::Webview;
+use taurino_core::webview::Webview;
 use taurino_core::{
   Config, EngineLoop, EngineLoopBuilder, EventLoopMessage,
   async_runtime::IPCRuntime,
