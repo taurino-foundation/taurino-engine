@@ -2240,9 +2240,9 @@ dependencies = [
 
 [[package]]
 name = "objc2"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a12a8ed07aefc768292f076dc3ac8c48f3781c8f2d5851dd3d98950e8c5a89f"
+checksum = "08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8"
 dependencies = [
  "objc2-encode",
  "objc2-exception-helper",
@@ -3659,6 +3659,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "raw-window-handle",
+ "serde",
  "tao-macros",
  "unicode-segmentation",
  "url",
@@ -3713,7 +3714,7 @@ dependencies = [
 [[package]]
 name = "taurino-core"
 version = "0.1.0"
-source = "git+https://github.com/taurino-foundation/taurino-core#eb5a7c8ab8b3b20d55b748c22e61331f2482dd96"
+source = "git+https://github.com/taurino-foundation/taurino-core#050c13428c055f30fc978c78a097c9d796149010"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3736,6 +3737,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-web-kit",
  "once_cell",
+ "parking_lot",
  "percent-encoding",
  "plist",
  "raw-window-handle",
@@ -3770,6 +3772,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ctrlc",
+ "serde",
+ "serde_json",
  "serde_with",
  "taurino-core",
  "url",
@@ -4201,9 +4205,9 @@ dependencies = [
 
 [[package]]
 name = "want"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
+checksum = "ec4cdd0dd910afe868b7ef477227d8d538b46b3075031afee8a9f2acb0a2ed0b"
 dependencies = [
  "try-lock",
 ]

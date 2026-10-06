@@ -38,24 +38,26 @@
 //! and avoids performing GUI or manager operations from an arbitrary thread.
 
 use std::{sync::Arc, vec};
-
 mod handler;
 mod manager;
 mod trayicon;
 mod window;
-
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use taurino_core::Webview;
 use taurino_core::{
-    EngineLoop, EngineLoopBuilder, EventLoopMessage, WebContextStore,
-    aio::IPCRuntime,
-    core::resources::ResourceTable,
-    menu::MenuManager,
-    schema::{
-        webview::{WebViewConfig, WebviewUrl},
-        window::WindowConfig,
-    },
-    utils::{ArcMut, arc_mut},
+  EngineLoop, EngineLoopBuilder, EventLoopMessage,
+  aio::IPCRuntime,
+  core::{
+    resources::ResourceTable,
+    stores::{DeviceRegistry, WebContextStore},
+  },
+  menu::MenuManager,
+  schema::{
+    webview::{WebViewConfig, WebviewUrl},
+    window::WindowConfig,
+  },
+  utils::{ArcMut, arc_mut},
 };
-use url::Url;
 
 use crate::{handler::EngineEventHandler, manager::EngineManager};
 
@@ -135,336 +137,350 @@ use crate::{handler::EngineEventHandler, manager::EngineManager};
 /// This design prevents GUI cleanup or manager operations from executing on the
 /// signal-handling thread.
 pub struct Engine {
-    /// Shared WebView context storage.
-    ///
-    /// The context store is shared between WebViews created by the engine.
-    /// Keeping it at engine scope allows WebViews to reuse browser context,
-    /// storage and other WebView runtime state where supported by the
-    /// underlying platform.
-    webcontext: WebContextStore,
+  device_registry: ArcMut<DeviceRegistry>,
+  /// Shared WebView context storage.
+  ///
+  /// The context store is shared between WebViews created by the engine.
+  /// Keeping it at engine scope allows WebViews to reuse browser context,
+  /// storage and other WebView runtime state where supported by the
+  /// underlying platform.
+  webcontext: WebContextStore,
 
-    /// Tao application event loop.
-    ///
-    /// The event loop represents the central execution loop of the GUI
-    /// application and receives native window events as well as internal
-    /// [`EventLoopMessage`] values.
-    ///
-    /// It is owned directly by the engine because Tao associates the event loop
-    /// with the application thread and expects it to remain alive for the
-    /// lifetime of the GUI runtime.
-    event_loop: EngineLoop,
+  /// Tao application event loop.
+  ///
+  /// The event loop represents the central execution loop of the GUI
+  /// application and receives native window events as well as internal
+  /// [`EventLoopMessage`] values.
+  ///
+  /// It is owned directly by the engine because Tao associates the event loop
+  /// with the application thread and expects it to remain alive for the
+  /// lifetime of the GUI runtime.
+  event_loop: EngineLoop,
 
-    /// Shared application resource table.
-    ///
-    /// The resource table stores engine-managed resources that need stable
-    /// identifiers and application-wide access.
-    ///
-    /// The synchronized shared container allows managers and API layers to
-    /// reference the same table without transferring ownership.
-    table: ArcMut<ResourceTable>,
+  /// Shared application resource table.
+  ///
+  /// The resource table stores engine-managed resources that need stable
+  /// identifiers and application-wide access.
+  ///
+  /// The synchronized shared container allows managers and API layers to
+  /// reference the same table without transferring ownership.
+  table: ArcMut<ResourceTable>,
 
-    /// Shared collection of engine subsystem managers.
-    ///
-    /// [`EngineManager`] provides access to managers for windows, menus, tray
-    /// icons and other application-wide services.
-    ///
-    /// It is reference counted because individual subsystems and callbacks may
-    /// need to retain access to the engine state independently.
-    manager: Arc<EngineManager>,
-    config: taurino_core::config::Config,
-    ipc_runtime: Arc<IPCRuntime>,
+  /// Shared collection of engine subsystem managers.
+  ///
+  /// [`EngineManager`] provides access to managers for windows, menus, tray
+  /// icons and other application-wide services.
+  ///
+  /// It is reference counted because individual subsystems and callbacks may
+  /// need to retain access to the engine state independently.
+  manager: Arc<EngineManager>,
+  config: taurino_core::config::Config,
+  ipc_runtime: Arc<IPCRuntime>,
 }
 
 impl Engine {
-    /// Creates and initializes a new application engine.
-    ///
-    /// This method prepares all process-level runtime components required
-    /// before the application event loop can be started.
-    ///
-    /// # Initialization sequence
-    ///
-    /// The following components are initialized:
-    ///
-    /// 1. shared [`WebContextStore`];
-    /// 2. global [`ResourceTable`];
-    /// 3. menu manager;
-    /// 4. Tao event-loop builder;
-    /// 5. platform-specific event-loop integrations;
-    /// 6. Tao event loop;
-    /// 7. process termination signal handler;
-    /// 8. shared [`EngineManager`].
-    ///
-    /// # Windows integration
-    ///
-    /// On Windows, the menu subsystem installs a native message hook into Tao's
-    /// event-loop builder.
-    ///
-    /// This allows the menu manager to participate in native Windows message
-    /// processing without introducing a second message loop.
-    ///
-    /// # Process signals
-    ///
-    /// A process termination handler is installed through `ctrlc`.
-    ///
-    /// The handler does **not** perform application cleanup directly. Instead,
-    /// it sends [`EventLoopMessage::Shutdown`] into the Tao event loop.
-    ///
-    /// This distinction is important because signal callbacks may execute on a
-    /// separate thread while Tao window and lifecycle operations belong to the
-    /// event-loop thread.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if one of the engine subsystems cannot be initialized.
-    ///
-    /// The signal-handler installation currently uses `expect`, meaning that a
-    /// failure to install the process handler causes process termination rather
-    /// than being returned through this method.
-    pub fn new() -> anyhow::Result<Self> {
-        let mut config = taurino_core::config::Config::new("")?;
-        config.add_window_config(WindowConfig {
-            // center: true,
-            enable_drag_drop: true,
-            webviews: vec![WebViewConfig {
-                drag_drop_enabled: true,
-                // Configure this WebView as a child of the native
-                // Taurino window.
+  /// Creates and initializes a new application engine.
+  ///
+  /// This method prepares all process-level runtime components required
+  /// before the application event loop can be started.
+  ///
+  /// # Initialization sequence
+  ///
+  /// The following components are initialized:
+  ///
+  /// 1. shared [`WebContextStore`];
+  /// 2. global [`ResourceTable`];
+  /// 3. menu manager;
+  /// 4. Tao event-loop builder;
+  /// 5. platform-specific event-loop integrations;
+  /// 6. Tao event loop;
+  /// 7. process termination signal handler;
+  /// 8. shared [`EngineManager`].
+  ///
+  /// # Windows integration
+  ///
+  /// On Windows, the menu subsystem installs a native message hook into Tao's
+  /// event-loop builder.
+  ///
+  /// This allows the menu manager to participate in native Windows message
+  /// processing without introducing a second message loop.
+  ///
+  /// # Process signals
+  ///
+  /// A process termination handler is installed through `ctrlc`.
+  ///
+  /// The handler does **not** perform application cleanup directly. Instead,
+  /// it sends [`EventLoopMessage::Shutdown`] into the Tao event loop.
+  ///
+  /// This distinction is important because signal callbacks may execute on a
+  /// separate thread while Tao window and lifecycle operations belong to the
+  /// event-loop thread.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if one of the engine subsystems cannot be initialized.
+  ///
+  /// The signal-handler installation currently uses `expect`, meaning that a
+  /// failure to install the process handler causes process termination rather
+  /// than being returned through this method.
+  pub fn new() -> anyhow::Result<Self> {
+    let mut config = taurino_core::config::Config::new("")?;
+    config.add_window_config(WindowConfig {
+      // center: true,
+      enable_drag_drop: true,
+      webviews: vec![WebViewConfig {
+        drag_drop_enabled: true,
+        // Configure this WebView as a child of the native
+        // Taurino window.
 
-                // Load an external HTTPS resource.
-                url: WebviewUrl::default(),
+        // Load an external HTTPS resource.
+        url: WebviewUrl::default(),
 
-                // Preserve subsystem defaults for all options that
-                // are not explicitly required here.
-                ..Default::default()
-            }],
+        // Preserve subsystem defaults for all options that
+        // are not explicitly required here.
+        ..Default::default()
+      }],
 
-            ..Default::default()
-        });
-        config.add_window_config(WindowConfig {
-            // center: true,
-            label: "sub:window".to_string(),
-            enable_drag_drop: true,
-            webviews: vec![WebViewConfig {
-                drag_drop_enabled: true,
-                // Configure this WebView as a child of the native
-                // Taurino window.
+      ..Default::default()
+    });
+    config.add_window_config(WindowConfig {
+      // center: true,
+      label: "sub:window".to_string(),
+      enable_drag_drop: true,
+      webviews: vec![WebViewConfig {
+        drag_drop_enabled: true,
+        // Configure this WebView as a child of the native
+        // Taurino window.
 
-                // Load an external HTTPS resource.
-                url: WebviewUrl::default(),
+        // Load an external HTTPS resource.
+        url: WebviewUrl::default(),
 
-                // Preserve subsystem defaults for all options that
-                // are not explicitly required here.
-                ..Default::default()
-            }],
+        // Preserve subsystem defaults for all options that
+        // are not explicitly required here.
+        ..Default::default()
+      }],
 
-            ..Default::default()
-        });
-        // ---------------------------------------------------------------------
-        // Shared WebView runtime
-        // ---------------------------------------------------------------------
-        //
-        // The context store is created once at engine startup and shared with
-        // WebView-related components throughout the application lifetime.
-        let webcontext = WebContextStore::new();
+      ..Default::default()
+    });
 
-        // ---------------------------------------------------------------------
-        // Global resource registry
-        // ---------------------------------------------------------------------
-        //
-        // Resources stored here can be referenced from multiple engine
-        // subsystems while preserving one canonical resource table.
-        let resource_table = arc_mut(ResourceTable::default());
+    let device_registry = DeviceRegistry::new()?;
+    // ---------------------------------------------------------------------
+    // Shared WebView runtime
+    // ---------------------------------------------------------------------
+    //
+    // The context store is created once at engine startup and shared with
+    // WebView-related components throughout the application lifetime.
+    let webcontext = WebContextStore::new();
 
-        // ---------------------------------------------------------------------
-        // Menu subsystem
-        // ---------------------------------------------------------------------
-        //
-        // The menu manager is initialized before constructing the final engine
-        // manager because platform-specific event-loop integration may require
-        // access to it.
-        let menu_manager = MenuManager::new()?;
+    // ---------------------------------------------------------------------
+    // Global resource registry
+    // ---------------------------------------------------------------------
+    //
+    // Resources stored here can be referenced from multiple engine
+    // subsystems while preserving one canonical resource table.
+    let resource_table = arc_mut(ResourceTable::default());
 
-        // ---------------------------------------------------------------------
-        // Tao event-loop construction
-        // ---------------------------------------------------------------------
-        //
-        // A user-event-capable event loop is required because Taurino injects
-        // internal engine messages such as shutdown commands into the native
-        // GUI event stream.
-        let mut loop_builder = EngineLoopBuilder::with_user_event();
+    // ---------------------------------------------------------------------
+    // Menu subsystem
+    // ---------------------------------------------------------------------
+    //
+    // The menu manager is initialized before constructing the final engine
+    // manager because platform-specific event-loop integration may require
+    // access to it.
+    let menu_manager = MenuManager::new()?;
 
-        // ---------------------------------------------------------------------
-        // Windows native message integration
-        // ---------------------------------------------------------------------
-        //
-        // Windows menus participate in the Win32 message pump. The menu
-        // manager therefore installs its message hook into Tao before the
-        // event loop itself is built.
-        #[cfg(windows)]
-        {
-            use taurino_core::native::tao::platform::windows::EventLoopBuilderExtWindows;
+    // ---------------------------------------------------------------------
+    // Tao event-loop construction
+    // ---------------------------------------------------------------------
+    //
+    // A user-event-capable event loop is required because Taurino injects
+    // internal engine messages such as shutdown commands into the native
+    // GUI event stream.
+    let mut loop_builder = EngineLoopBuilder::with_user_event();
 
-            let msg = MenuManager::install_msg_hook(menu_manager.clone());
-
-            loop_builder.with_msg_hook(msg);
-        }
-
-        // Build the final event loop after all platform extensions have been
-        // configured.
-        let event_loop = loop_builder.build();
-
-        // ---------------------------------------------------------------------
-        // Process shutdown bridge
-        // ---------------------------------------------------------------------
-        //
-        // EventLoopProxy is Send-capable and provides the safe boundary between
-        // the ctrlc callback thread and Tao's event-loop thread.
-        let ctrlc_proxy = event_loop.create_proxy();
-        let proxy = event_loop.create_proxy();
-        ctrlc::set_handler(move || {
-            // Ignore delivery failure here because it normally means that the
-            // Tao event loop has already terminated and therefore no shutdown
-            // work can be scheduled anymore.
-            let _ = ctrlc_proxy.send_event(EventLoopMessage::Shutdown);
-        })
-        .expect("failed to install signal handler");
-
-        // ---------------------------------------------------------------------
-        // Shared manager infrastructure
-        // ---------------------------------------------------------------------
-        //
-        // EngineManager receives the globally shared runtime components and
-        // constructs the subsystem managers around them.
-        let ipc_runtime = IPCRuntime::new(&config, proxy.clone())?;
-        let manager = EngineManager::new(
-            ipc_runtime.clone(),
-            webcontext.clone(),
-            resource_table.clone(),
-            menu_manager,
-            proxy,
-            config.clone(),
-        )?;
-
-        Ok(Self {
-            webcontext,
-            event_loop,
-            manager,
-            table: resource_table,
-            config,
-            ipc_runtime,
-        })
+    // ---------------------------------------------------------------------
+    // Windows native message integration
+    // ---------------------------------------------------------------------
+    //
+    // Windows menus participate in the Win32 message pump. The menu
+    // manager therefore installs its message hook into Tao before the
+    // event loop itself is built.
+    #[cfg(windows)]
+    {
+      use taurino_core::native::tao::platform::windows::EventLoopBuilderExtWindows;
+      loop_builder.with_msg_hook(MenuManager::install_msg_hook(menu_manager.clone()));
     }
 
-    /// Returns the shared application resource table.
-    ///
-    /// The returned value references the same underlying table owned by the
-    /// engine rather than creating a new independent resource registry.
-    ///
-    /// Callers may therefore use the returned handle to access resources
-    /// registered by other engine subsystems.
-    pub fn resource_table(&self) -> ArcMut<ResourceTable> {
-        self.table.clone()
+    // Build the final event loop after all platform extensions have been
+    // configured.
+    let event_loop = loop_builder.build();
+
+    // ---------------------------------------------------------------------
+    // Process shutdown bridge
+    // ---------------------------------------------------------------------
+    //
+    // EventLoopProxy is Send-capable and provides the safe boundary between
+    // the ctrlc callback thread and Tao's event-loop thread.
+    let ctrlc_proxy = event_loop.create_proxy();
+    let proxy = event_loop.create_proxy();
+    ctrlc::set_handler(move || {
+      // Ignore delivery failure here because it normally means that the
+      // Tao event loop has already terminated and therefore no shutdown
+      // work can be scheduled anymore.
+      let _ = ctrlc_proxy.send_event(EventLoopMessage::Shutdown);
+    })
+    .expect("failed to install signal handler");
+
+    // ---------------------------------------------------------------------
+    // Shared manager infrastructure
+    // ---------------------------------------------------------------------
+    //
+    // EngineManager receives the globally shared runtime components and
+    // constructs the subsystem managers around them.
+    let ipc_runtime = IPCRuntime::new(&config, proxy.clone())?;
+    let manager = EngineManager::new(
+      ipc_runtime.clone(),
+      webcontext.clone(),
+      resource_table.clone(),
+      menu_manager,
+      proxy,
+      config.clone(),
+      device_registry.clone(),
+    )?;
+
+    Ok(Self {
+      config,
+      device_registry,
+      webcontext,
+      event_loop,
+      manager,
+      table: resource_table,
+      ipc_runtime,
+    })
+  }
+
+  #[cfg(any(target_os = "macos", target_os = "ios"))]
+  fn fetch_data_store_identifiers<F: FnOnce(Vec<[u8; 16]>) + Send + 'static>(&self, cb: F) -> Result<()> {
+    if let Err(e) = WebView::fetch_data_store_identifiers(cb) {
+      // this shouldn't ever happen because we're running on the main thread
+      // but let's be safe and warn here
+      log::error!("failed to fetch data store identifiers: {e}");
     }
+  }
 
-    /// Returns the shared WebView context store.
-    ///
-    /// The returned store is a clone of the shared context handle and refers
-    /// to the same underlying WebView runtime state where supported by
-    /// [`WebContextStore`].
-    pub fn webcontext(&self) -> WebContextStore {
-        self.webcontext.clone()
-    }
+  #[cfg(any(target_os = "macos", target_os = "ios"))]
+  fn remove_data_store<F: FnOnce(Result<()>) + Send + 'static>(&self, uuid: [u8; 16], cb: F) -> Result<()> {
+    WebView::remove_data_store(&uuid, move |res| cb(res.map_err(|_| Error::FailedToRemoveDataStore)))
+  }
 
-    /// Starts the application runtime and enters the Tao event loop.
-    ///
-    /// This method consumes the engine because control is transferred to Tao's
-    /// event loop for the remainder of the GUI application's runtime.
-    ///
-    /// # Startup sequence
-    ///
-    /// Before entering the event loop, the method:
-    ///
-    /// 1. installs global window event handling;
-    /// 2. installs global WebView event handling;
-    /// 3. creates the initial application window;
-    /// 4. creates [`EngineEventHandler`];
-    /// 5. transfers event processing to Tao.
-    ///
-    /// # Event dispatch
-    ///
-    /// Every Tao event is forwarded to [`EngineEventHandler::handle_event`].
-    ///
-    /// The event handler is responsible for interpreting native window events,
-    /// handling Taurino user events and coordinating application shutdown.
-    ///
-    /// # Return behavior
-    ///
-    /// Depending on the Tao version and platform implementation, entering the
-    /// event loop normally transfers control until application termination.
-    pub fn start(self) -> anyhow::Result<()> {
-        // Clone the manager because ownership of `self.manager` will later be
-        // transferred into EngineEventHandler.
-        let manager = self.manager.clone();
+  /// Returns the shared application resource table.
+  ///
+  /// The returned value references the same underlying table owned by the
+  /// engine rather than creating a new independent resource registry.
+  ///
+  /// Callers may therefore use the returned handle to access resources
+  /// registered by other engine subsystems.
+  pub fn resource_table(&self) -> ArcMut<ResourceTable> {
+    self.table.clone()
+  }
 
-        // ---------------------------------------------------------------------
-        // Global window event observer
-        // ---------------------------------------------------------------------
-        //
-        // This callback receives normalized engine-level window events.
-        //
-        // The current implementation only prints diagnostics. Applications or
-        // higher framework layers can replace this with their own dispatcher.
-        manager.set_global_window_event_handler(|_manager, window_label, event| {
-            println!("Window `{window_label}` emitted: {:?}", event);
-        })?;
+  /// Returns the shared WebView context store.
+  ///
+  /// The returned store is a clone of the shared context handle and refers
+  /// to the same underlying WebView runtime state where supported by
+  /// [`WebContextStore`].
+  pub fn webcontext(&self) -> WebContextStore {
+    self.webcontext.clone()
+  }
 
-        // ---------------------------------------------------------------------
-        // Global WebView event observer
-        // ---------------------------------------------------------------------
-        //
-        // Similar to window events, WebView events are forwarded through one
-        // engine-wide callback.
-        manager.set_global_webview_event_handler(
-            |_manager, window_label, webview_label, event| {
-                println!(
-                    "WebView `{webview_label}` in window \
+  /// Starts the application runtime and enters the Tao event loop.
+  ///
+  /// This method consumes the engine because control is transferred to Tao's
+  /// event loop for the remainder of the GUI application's runtime.
+  ///
+  /// # Startup sequence
+  ///
+  /// Before entering the event loop, the method:
+  ///
+  /// 1. installs global window event handling;
+  /// 2. installs global WebView event handling;
+  /// 3. creates the initial application window;
+  /// 4. creates [`EngineEventHandler`];
+  /// 5. transfers event processing to Tao.
+  ///
+  /// # Event dispatch
+  ///
+  /// Every Tao event is forwarded to [`EngineEventHandler::handle_event`].
+  ///
+  /// The event handler is responsible for interpreting native window events,
+  /// handling Taurino user events and coordinating application shutdown.
+  ///
+  /// # Return behavior
+  ///
+  /// Depending on the Tao version and platform implementation, entering the
+  /// event loop normally transfers control until application termination.
+  pub fn start(self) -> anyhow::Result<()> {
+    // Clone the manager because ownership of `self.manager` will later be
+    // transferred into EngineEventHandler.
+    let manager = self.manager.clone();
+
+    // ---------------------------------------------------------------------
+    // Global window event observer
+    // ---------------------------------------------------------------------
+    //
+    // This callback receives normalized engine-level window events.
+    //
+    // The current implementation only prints diagnostics. Applications or
+    // higher framework layers can replace this with their own dispatcher.
+    manager.set_global_window_event_handler(|_manager, window_label, event| {
+      println!("Window `{window_label}` emitted: {:?}", event);
+    })?;
+
+    // ---------------------------------------------------------------------
+    // Global WebView event observer
+    // ---------------------------------------------------------------------
+    //
+    // Similar to window events, WebView events are forwarded through one
+    // engine-wide callback.
+    manager.set_global_webview_event_handler(|_manager, window_label, webview_label, event| {
+      println!(
+        "WebView `{webview_label}` in window \
                      `{window_label}` emitted: {:?}",
-                    event
-                );
-            },
-        )?;
+        event
+      );
+    })?;
 
-        // ---------------------------------------------------------------------
-        // Initial application window
-        // ---------------------------------------------------------------------
-        //
-        // Window creation is performed before entering Tao's event loop because
-        // the initial runtime target is already available through `event_loop`.
+    // ---------------------------------------------------------------------
+    // Initial application window
+    // ---------------------------------------------------------------------
+    //
+    // Window creation is performed before entering Tao's event loop because
+    // the initial runtime target is already available through `event_loop`.
 
-        for window in self.config.get_windows() {
-            if window.create {
-                manager.window()?.open_window(window, &self.event_loop)?;
-            }
-        }
-
-        // ---------------------------------------------------------------------
-        // Central runtime event handler
-        // ---------------------------------------------------------------------
-        //
-        // EngineEventHandler owns the shared manager reference and coordinates
-        // application lifecycle behavior for incoming Tao events.
-        let event_handler = EngineEventHandler::new(self.manager);
-
-        // ---------------------------------------------------------------------
-        // Enter GUI event loop
-        // ---------------------------------------------------------------------
-        //
-        // From this point onward, application lifecycle changes should normally
-        // be driven by events rather than by direct calls from external threads.
-        self.event_loop.run(move |event, target, control_flow| {
-            event_handler.handle_event(event, target, control_flow);
-        });
+    for window in self.config.get_windows() {
+      if window.create {
+        manager.window()?.open_window(window, &self.event_loop)?;
+      }
     }
+
+    // ---------------------------------------------------------------------
+    // Central runtime event handler
+    // ---------------------------------------------------------------------
+    //
+    // EngineEventHandler owns the shared manager reference and coordinates
+    // application lifecycle behavior for incoming Tao events.
+    let event_handler = EngineEventHandler::new(self.manager);
+
+    // ---------------------------------------------------------------------
+    // Enter GUI event loop
+    // ---------------------------------------------------------------------
+    //
+    // From this point onward, application lifecycle changes should normally
+    // be driven by events rather than by direct calls from external threads.
+    self.event_loop.run(move |event, target, control_flow| {
+      event_handler.handle_event(event, target, control_flow);
+    });
+  }
 }
 
 // =============================================================================
@@ -501,15 +517,15 @@ impl Engine {
 /// caller.
 #[macro_export]
 macro_rules! try_or_log_err {
-    ($body:block) => {
-        match (move || -> anyhow::Result<()> { $body })() {
-            Ok(_) => {}
+  ($body:block) => {
+    match (move || -> anyhow::Result<()> { $body })() {
+      Ok(_) => {}
 
-            Err(e) => {
-                crate::log_err!(e);
-            }
-        }
-    };
+      Err(e) => {
+        crate::log_err!(e);
+      }
+    }
+  };
 }
 
 /// Logs an error when a [`Result`] is `Err`.
@@ -525,11 +541,11 @@ macro_rules! try_or_log_err {
 /// individual failure should be recorded without aborting subsequent cleanup.
 #[macro_export]
 macro_rules! log_if_err {
-    ($result:expr) => {
-        if let Err(e) = $result {
-            taurino_core::taurino_log!(taurino_core::logging::Level::Error, "{e}");
-        }
-    };
+  ($result:expr) => {
+    if let Err(e) = $result {
+      taurino_core::taurino_log!(taurino_core::logging::Level::Error, "{e}");
+    }
+  };
 }
 
 /// Writes an informational message to the Taurino logging subsystem.
@@ -537,9 +553,9 @@ macro_rules! log_if_err {
 /// Formatting is delegated to [`taurino_log!`].
 #[macro_export]
 macro_rules! log {
-    ($result:expr) => {
-        taurino_core::taurino_log!(taurino_core::logging::Level::Info, "{}", $result);
-    };
+  ($result:expr) => {
+    taurino_core::taurino_log!(taurino_core::logging::Level::Info, "{}", $result);
+  };
 }
 
 /// Writes an error message to the Taurino logging subsystem.
@@ -548,7 +564,7 @@ macro_rules! log {
 /// supplied value as an error.
 #[macro_export]
 macro_rules! log_err {
-    ($result:expr) => {
-        $taurino_core::taurino_log!(taurino_core::logging::Level::Error, "{}", $result);
-    };
+  ($result:expr) => {
+    $taurino_core::taurino_log!(taurino_core::logging::Level::Error, "{}", $result);
+  };
 }
