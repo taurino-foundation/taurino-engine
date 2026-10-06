@@ -49,16 +49,16 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{Result, anyhow};
 use taurino_core::{
-  EngineLoopClosed, EngineLoopProxy, EventLoopMessage,
-  aio::IPCRuntime,
-  core::{
-    resources::ResourceTable,
-    stores::{DeviceRegistry, WebContextStore},
-  },
+  Config, EngineLoopClosed, EngineLoopProxy, EventLoopMessage,
+  async_runtime::IPCRuntime,
   lock,
   menu::MenuManager,
   schema::event::{WebViewEvent, WindowEvent},
-  utils::{ArcMut, lock_state},
+  tools::{
+    ArcMut, lock_state,
+    resources::ResourceTable,
+    stores::{DeviceRegistry, WebContextStore},
+  },
 };
 
 use crate::{trayicon::TrayIconManager, window::WindowManager};
@@ -103,6 +103,7 @@ pub type WebViewEventHandler = Box<dyn Fn(Arc<EngineManager>, String, String, We
 ///
 /// `EngineManager` acts as the central shared state container of the engine.
 /// Instances are intended to be shared through [`Arc`].
+#[allow(dead_code)]
 pub struct EngineManager {
   _device_registry: ArcMut<DeviceRegistry>,
   /// Shared WebView context store.
@@ -127,7 +128,7 @@ pub struct EngineManager {
   _global_webview_event_handler: Mutex<Option<WebViewEventHandler>>,
 
   pub(crate) proxy: EngineLoopProxy,
-  config: taurino_core::config::Config,
+  config: Config,
   ipc_runtime: Arc<IPCRuntime>,
 }
 
@@ -142,7 +143,7 @@ impl EngineManager {
     resource_table: ArcMut<ResourceTable>,
     menu_manager: ArcMut<MenuManager>,
     proxy: EngineLoopProxy,
-    config: taurino_core::config::Config,
+    config: Config,
     device_registry: ArcMut<DeviceRegistry>,
   ) -> Result<Arc<Self>> {
     let trayicon_manager = TrayIconManager::new()?;
@@ -176,7 +177,8 @@ impl EngineManager {
   pub fn webcontext(self: &Arc<Self>) -> Result<WebContextStore> {
     Ok(self._webcontext.clone())
   }
-  pub fn config(self: &Arc<Self>) -> Result<taurino_core::config::Config> {
+  #[allow(dead_code)]
+  pub fn config(self: &Arc<Self>) -> Result<Config> {
     Ok(self.config.clone())
   }
   pub fn connection(self: &Arc<Self>) -> Result<Arc<IPCRuntime>> {

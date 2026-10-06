@@ -42,21 +42,24 @@ mod handler;
 mod manager;
 mod trayicon;
 mod window;
+use anyhow::Result;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use anyhow::anyhow;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use taurino_core::Webview;
 use taurino_core::{
-  EngineLoop, EngineLoopBuilder, EventLoopMessage,
-  aio::IPCRuntime,
-  core::{
-    resources::ResourceTable,
-    stores::{DeviceRegistry, WebContextStore},
-  },
+  Config, EngineLoop, EngineLoopBuilder, EventLoopMessage,
+  async_runtime::IPCRuntime,
   menu::MenuManager,
   schema::{
     webview::{WebViewConfig, WebviewUrl},
     window::WindowConfig,
   },
-  utils::{ArcMut, arc_mut},
+  tools::{
+    ArcMut, arc_mut,
+    resources::ResourceTable,
+    stores::{DeviceRegistry, WebContextStore},
+  },
 };
 
 use crate::{handler::EngineEventHandler, manager::EngineManager};
@@ -136,6 +139,10 @@ use crate::{handler::EngineEventHandler, manager::EngineManager};
 ///
 /// This design prevents GUI cleanup or manager operations from executing on the
 /// signal-handling thread.
+///
+///
+///
+#[allow(dead_code)]
 pub struct Engine {
   device_registry: ArcMut<DeviceRegistry>,
   /// Shared WebView context storage.
@@ -174,7 +181,7 @@ pub struct Engine {
   /// It is reference counted because individual subsystems and callbacks may
   /// need to retain access to the engine state independently.
   manager: Arc<EngineManager>,
-  config: taurino_core::config::Config,
+  config: Config,
   ipc_runtime: Arc<IPCRuntime>,
 }
 
@@ -223,10 +230,11 @@ impl Engine {
   /// The signal-handler installation currently uses `expect`, meaning that a
   /// failure to install the process handler causes process termination rather
   /// than being returned through this method.
-  pub fn new() -> anyhow::Result<Self> {
-    let mut config = taurino_core::config::Config::new("")?;
+  pub fn new() -> Result<Self> {
+    let mut config = Config::new("")?;
     config.add_window_config(WindowConfig {
       // center: true,
+      center: true,
       enable_drag_drop: true,
       webviews: vec![WebViewConfig {
         drag_drop_enabled: true,
@@ -247,6 +255,7 @@ impl Engine {
       // center: true,
       label: "sub:window".to_string(),
       enable_drag_drop: true,
+      center: true,
       webviews: vec![WebViewConfig {
         drag_drop_enabled: true,
         // Configure this WebView as a child of the native
@@ -364,13 +373,15 @@ impl Engine {
     if let Err(e) = WebView::fetch_data_store_identifiers(cb) {
       // this shouldn't ever happen because we're running on the main thread
       // but let's be safe and warn here
-      log::error!("failed to fetch data store identifiers: {e}");
+      taurino_core::taurino_log!(taurino_core::logging::Level::Error, "{e}");
     }
   }
 
   #[cfg(any(target_os = "macos", target_os = "ios"))]
   fn remove_data_store<F: FnOnce(Result<()>) + Send + 'static>(&self, uuid: [u8; 16], cb: F) -> Result<()> {
-    WebView::remove_data_store(&uuid, move |res| cb(res.map_err(|_| Error::FailedToRemoveDataStore)))
+    WebView::remove_data_store(&uuid, move |res| {
+      cb(res.map_err(|e| anyhow::anyhow!("failed to remove data store: {e}")))
+    })
   }
 
   /// Returns the shared application resource table.
@@ -419,7 +430,7 @@ impl Engine {
   ///
   /// Depending on the Tao version and platform implementation, entering the
   /// event loop normally transfers control until application termination.
-  pub fn start(self) -> anyhow::Result<()> {
+  pub fn start(self) -> Result<()> {
     // Clone the manager because ownership of `self.manager` will later be
     // transferred into EngineEventHandler.
     let manager = self.manager.clone();
@@ -489,7 +500,7 @@ impl Engine {
 
 /// Executes a fallible block and logs any returned error.
 ///
-/// The block is evaluated inside a closure returning [`anyhow::Result<()>`].
+/// The block is evaluated inside a closure returning [`Result<()>`].
 /// This allows the caller to use the `?` operator inside the supplied block
 /// without propagating the resulting error to the surrounding function.
 ///
@@ -518,7 +529,7 @@ impl Engine {
 #[macro_export]
 macro_rules! try_or_log_err {
   ($body:block) => {
-    match (move || -> anyhow::Result<()> { $body })() {
+    match (move || -> Result<()> { $body })() {
       Ok(_) => {}
 
       Err(e) => {
@@ -539,32 +550,57 @@ macro_rules! try_or_log_err {
 ///
 /// This is primarily useful for cleanup paths and event handling where an
 /// individual failure should be recorded without aborting subsequent cleanup.
+///
+///
+#[macro_export]
+macro_rules! log_if_err {
+  ($result:expr) => {{
+    if let Err(error) = $result {
+      taurino_core::taurino_error!("{error}");
+    }
+  }};
+}
+
+#[macro_export]
+macro_rules! log_err {
+  ($error:expr) => {{
+    taurino_core::taurino_error!("{}", $error);
+  }};
+}
+
+/*
 #[macro_export]
 macro_rules! log_if_err {
   ($result:expr) => {
     if let Err(e) = $result {
-      taurino_core::taurino_log!(taurino_core::logging::Level::Error, "{e}");
+      taurino_core::taurino_log!(
+        taurino_core::tools::logging::Level::Error,
+        "{e}"
+      );
     }
   };
 }
 
-/// Writes an informational message to the Taurino logging subsystem.
-///
-/// Formatting is delegated to [`taurino_log!`].
 #[macro_export]
 macro_rules! log {
   ($result:expr) => {
-    taurino_core::taurino_log!(taurino_core::logging::Level::Info, "{}", $result);
+    taurino_core::taurino_log!(
+      taurino_core::tools::logging::Level::Info,
+      "{}",
+      $result
+    );
   };
 }
 
-/// Writes an error message to the Taurino logging subsystem.
-///
-/// This macro does not alter program control flow and does not propagate the
-/// supplied value as an error.
 #[macro_export]
 macro_rules! log_err {
   ($result:expr) => {
-    $taurino_core::taurino_log!(taurino_core::logging::Level::Error, "{}", $result);
+    taurino_core::taurino_log!(
+      taurino_core::tools::logging::Level::Error,
+      "{}",
+      $result
+    );
   };
 }
+
+*/

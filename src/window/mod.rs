@@ -61,11 +61,11 @@ use std::{
 };
 use taurino_core::{
   EngineWindowTarget,
-  core::window::Window,
   native::tao::window::WindowId as TaoWindowId,
   schema::window::{WindowConfig, WindowId},
+  tools::{ArcMut, arc_mut},
   unsafe_impl_sync_send,
-  utils::{ArcMut, arc_mut},
+  window::Window,
 };
 
 use crate::{manager::EngineManager, window::factory::create_window};

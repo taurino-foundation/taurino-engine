@@ -9,14 +9,13 @@ use anyhow::{Result, anyhow};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use taurino_core::schema::webview::WebContentProcessTerminatePolicy;
 #[cfg(windows)]
-use taurino_core::{schema::FocusState, utils::ArcMut};
+use taurino_core::{schema::FocusState, tools::ArcMut};
 use taurino_core::{
   schema::{
     webview::{NewWindowAction, NewWindowPolicy, WebViewConfig, WebViewId},
     window::{WindowConfig, WindowId},
   },
-  utils::{NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse},
-  webview::WebViewManager,
+  webview::{NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, WebViewManager},
 };
 use url::Url;
 

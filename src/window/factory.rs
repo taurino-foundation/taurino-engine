@@ -9,28 +9,25 @@ use std::{
 use anyhow::Result;
 
 use taurino_core::{
-  EngineWindowTarget, EventLoopMessage, MonitorExt,
-  core::{
-    stores::WebContext,
-    window::{Window, WindowBuilder},
-  },
+  EngineWindowTarget, EventLoopMessage,
   menu::RawWindow,
   native::wry::{DragDropEvent as WryDragDropEvent, WebContext as WryContext, WebViewBuilder},
+  platforms::{MonitorExt, calculate_window_center_position},
   schema::{
     PhysicalPosition, PhysicalSize,
     event::{DragDropEvent, SynthesizedWindowEvent, WebViewEvent},
     webview::{BackgroundThrottlingPolicy, WebViewConfig, WebviewBounds, WebviewUrl},
     window::{WindowConfig, WindowId, WindowId as CoreWindowId},
   },
-  utils::{
-    NewWindowFeatures, NewWindowOpener, NewWindowResponse, arc_mut, calculate_window_center_position,
-    find_monitor_for_position, from_wry_permission_kind, lock_state, to_wry_permission_response,
+  tools::{arc_mut, find_monitor_for_position, lock_state, stores::WebContext, wrappers::RectWrapper},
+  webview::{
+    NewWindowFeatures, NewWindowOpener, NewWindowResponse, WebViewManager, WebViewWrapper, from_wry_permission_kind,
+    to_wry_permission_response,
   },
-  webview::{WebView, WebViewManager},
-  wrappers::RectWrapper,
+  window::{Window, WindowBuilder},
 };
 #[cfg(windows)]
-use taurino_core::{schema::FocusState, utils::ArcMut, windows::utils::apply_shadow_correction};
+use taurino_core::{platforms::windows::utils::apply_shadow_correction, schema::FocusState, tools::ArcMut};
 use url::Url;
 
 use crate::{
@@ -70,12 +67,10 @@ use taurino_core::{
 // ============================================================================
 // Windows
 // ============================================================================
-#[cfg(target_os = "windows")]
-use taurino_core::{
-  native::{tao::platform::windows::WindowExtWindows, wry::WebViewExtWindows},
-  undecorated_resizing,
-};
-
+#[cfg(windows)]
+use taurino_core::native::{tao::platform::windows::WindowExtWindows, wry::WebViewExtWindows};
+#[cfg(windows)]
+use taurino_core::window::undecorated_resizing;
 pub(crate) fn create_webview(
   engine_manager: Arc<EngineManager>,
   window_id: Arc<Mutex<WindowId>>,
@@ -84,7 +79,7 @@ pub(crate) fn create_webview(
   window_options: &WindowConfig,
   window: &taurino_core::native::tao::window::Window,
   #[cfg(windows)] focused_webview: ArcMut<FocusState>,
-) -> Result<WebView> {
+) -> Result<WebViewWrapper> {
   let manager = engine_manager.clone();
   let proxy = manager.proxy.clone();
 
@@ -360,7 +355,7 @@ pub(crate) fn create_webview(
   } else {
     web_context_key.clone()
   };
-  let webview = WebView::new(
+  let webview = WebViewWrapper::new(
     id,
     options.label.clone(),
     window_id,

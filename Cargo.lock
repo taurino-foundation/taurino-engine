@@ -3714,7 +3714,7 @@ dependencies = [
 [[package]]
 name = "taurino-core"
 version = "0.1.0"
-source = "git+https://github.com/taurino-foundation/taurino-core#050c13428c055f30fc978c78a097c9d796149010"
+source = "git+https://github.com/taurino-foundation/taurino-core#1e56b10e6594331a9ec3150aa151b2e06dc4e531"
 dependencies = [
  "anyhow",
  "async-trait",

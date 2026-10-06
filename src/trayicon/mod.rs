@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use taurino_core::{
+  tools::{ArcMut, arc_mut},
   unsafe_impl_sync_send,
-  utils::{ArcMut, arc_mut},
 };
 
 use crate::manager::EngineManager;
