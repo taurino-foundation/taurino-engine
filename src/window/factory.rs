@@ -62,8 +62,9 @@ use taurino_core::{
     tao::platform::unix::WindowExtUnix,
     wry::{WebViewBuilderExtUnix, WebViewExtUnix},
   },
-  undecorated_resizing,
 };
+
+use taurino_core::window::undecorated_resizing;
 // ============================================================================
 // Windows
 // ============================================================================
