@@ -479,7 +479,7 @@ pub(crate) fn create_webview(
   } else {
     web_context_key.clone()
   };
-  // webview.evaluate_script("console.log(window.__TAURINO_INTERNALS__)")?;
+  webview.evaluate_script("console.log(window.origin)")?; // __TAURINO_INTERNALS__
   let webview = WebView::new(
     id,
     options.label.clone(),
