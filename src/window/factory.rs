@@ -149,16 +149,11 @@ pub(crate) fn create_webview(
 
   // Aktuelle Prozess- und Thread-Informationen
   let pid = std::process::id();
-  let thread_id = format!("{:?}", std::thread::current().id());
 
   // Compile-Time-Informationen
   let os = std::env::consts::OS;
   let platform = std::env::consts::FAMILY;
   let arch = std::env::consts::ARCH;
-
-  // Vollständiges Rust Target
-  // TARGET wird typischerweise über build.rs gesetzt.
-  // Hier zunächst Compile-Time OS / Architektur verwenden.
   let target = format!("{arch}-{os}");
 
   all_initialization_scripts.push(main_frame_script(format!(
@@ -175,7 +170,6 @@ pub(crate) fn create_webview(
 
                 process: Object.freeze({{
                     pid: {pid},
-                    threadId: {thread_id}
                 }}),
 
                 platform: Object.freeze({{
@@ -193,7 +187,6 @@ pub(crate) fn create_webview(
     current_window_label = serde_json::to_string(&window_options.label)?,
     current_webview_label = serde_json::to_string(&options.label)?,
     pid = pid,
-    thread_id = serde_json::to_string(&thread_id)?,
     os = serde_json::to_string(os)?,
     family = serde_json::to_string(platform)?,
     arch = serde_json::to_string(arch)?,
