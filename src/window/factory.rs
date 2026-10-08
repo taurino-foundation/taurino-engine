@@ -1,31 +1,20 @@
-use std::{
-  collections::{
-    HashSet,
-    hash_map::Entry::{Occupied, Vacant},
-  },
-  sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
 use taurino_core::{
-  EngineWindowTarget, EventLoopMessage, NewWindowFeatures, NewWindowOpener, NewWindowResponse,
-  WebView, WebViewManager, from_wry_permission_kind,
+  EngineWindowTarget, NewWindowFeatures, NewWindowOpener, NewWindowResponse, WebView,
+  WebViewManager, from_wry_permission_kind,
   menu::RawWindow,
-  native::wry::{DragDropEvent as WryDragDropEvent, WebContext as WryContext, WebViewBuilder},
+  native::wry::WebViewBuilder,
   platforms::{MonitorExt, calculate_window_center_position},
   schema::{
-    PhysicalPosition, PhysicalSize,
-    event::{DragDropEvent, SynthesizedWindowEvent, WebViewEvent},
-    webview::{
-      BackgroundThrottlingPolicy, InitializationScript, WebViewConfig, WebviewBounds, WebviewUrl,
-    },
+    PhysicalSize,
+    webview::{BackgroundThrottlingPolicy, WebViewConfig, WebviewUrl},
     window::{WindowConfig, WindowId, WindowId as CoreWindowId},
   },
   to_wry_permission_response,
-  tools::{
-    arc_mut, find_monitor_for_position, lock_state, stores::WebContext, wrappers::RectWrapper,
-  },
+  tools::{arc_mut, find_monitor_for_position},
   window::{Window, WindowBuilder},
 };
 #[cfg(windows)]
@@ -36,7 +25,11 @@ use url::Url;
 
 use crate::{
   manager::EngineManager,
-  window::helpers::{attach_webview, new_window_handler, permission_request_handler},
+  window::helpers::{
+    all_initialization_scripts, apply_build_webview, apply_drag_drop_handlers,
+    apply_webview_bounds, apply_webview_context, attach_webview, new_window_handler,
+    permission_request_handler,
+  },
 };
 // ============================================================================
 // iOS
@@ -65,15 +58,7 @@ use taurino_core::native::{
   tao::platform::unix::WindowExtUnix,
   wry::{WebViewBuilderExtUnix, WebViewExtUnix},
 };
-#[cfg(any(
-  windows,
-  target_os = "linux",
-  target_os = "dragonfly",
-  target_os = "freebsd",
-  target_os = "netbsd",
-  target_os = "openbsd",
-))]
-use taurino_core::window::undecorated_resizing;
+
 // ============================================================================
 // Windows
 // ============================================================================
@@ -89,110 +74,26 @@ pub(crate) fn create_webview(
   window: &taurino_core::native::tao::window::Window,
   #[cfg(windows)] focused_webview: ArcMut<FocusState>,
 ) -> Result<WebView> {
-  let mut all_initialization_scripts: Vec<InitializationScript> = vec![];
+  let child = options.child;
+  let all_initialization_scripts =
+    all_initialization_scripts(&window_options.label, &options.label)?;
 
-  fn main_frame_script(script: String) -> InitializationScript {
-    InitializationScript {
-      script,
-      for_main_frame_only: true,
-    }
-  }
-
-  all_initialization_scripts.push(main_frame_script(
-    r"
-        Object.defineProperty(window, 'isTaurino', {
-          value: true,
-        });
-
-        if (!window.__TAURINO_INTERNALS__) {
-          Object.defineProperty(window, '__TAURINO_INTERNALS__', {
-            value: {
-              plugins: {}
-            }
-          })
-        }
-      "
-    .to_owned(),
-  ));
   let manager = engine_manager.clone();
   let proxy = manager.proxy.clone();
 
   let browser_context = manager.webcontext()?;
-  let mut web_context = lock_state(&browser_context, "browser_context")?;
-  let is_first_context = web_context.is_empty();
-  // the context must be stored on the HashMap because it must outlive the WebView on macOS
-  let automation_enabled = std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true");
-  let web_context_key = &options.data_directory;
-  let entry = web_context.entry(web_context_key.clone());
-  let web_context = match entry {
-    Occupied(occupied) => {
-      let occupied = occupied.into_mut();
-      occupied
-        .referenced_by_webviews
-        .insert(options.label.clone());
-      occupied
-    }
-    Vacant(vacant) => {
-      let mut web_context = WryContext::new(web_context_key.clone());
-      web_context.set_allows_automation(if automation_enabled {
-        is_first_context
-      } else {
-        false
-      });
-      vacant.insert(WebContext {
-        inner: web_context,
-        referenced_by_webviews: [options.label.clone()].into(),
-        registered_custom_protocols: HashSet::new(),
-      })
-    }
-  };
 
-  // Aktuelle Prozess- und Thread-Informationen
-  let pid = std::process::id();
+  let (mut contexts, web_context_key, context_key) = apply_webview_context(
+    options.label.clone(),
+    &browser_context,
+    options.data_directory.clone(),
+  )?;
 
-  // Compile-Time-Informationen
-  let os = std::env::consts::OS;
-  let platform = std::env::consts::FAMILY;
-  let arch = std::env::consts::ARCH;
-  let target = format!("{arch}-{os}");
+  let web_context = contexts
+    .get_mut(&web_context_key)
+    .expect("WebContext must exist");
 
-  all_initialization_scripts.push(main_frame_script(format!(
-    r#"
-        Object.defineProperty(window.__TAURINO_INTERNALS__, 'metadata', {{
-            value: Object.freeze({{
-                currentWindow: Object.freeze({{
-                    label: {current_window_label}
-                }}),
-
-                currentWebview: Object.freeze({{
-                    label: {current_webview_label}
-                }}),
-
-                process: Object.freeze({{
-                    pid: {pid},
-                }}),
-
-                platform: Object.freeze({{
-                    os: {os},
-                    family: {family},
-                    arch: {arch},
-                    target: {target}
-                }})
-            }}),
-            writable: false,
-            configurable: false,
-            enumerable: true
-        }});
-    "#,
-    current_window_label = serde_json::to_string(&window_options.label)?,
-    current_webview_label = serde_json::to_string(&options.label)?,
-    pid = pid,
-    os = serde_json::to_string(os)?,
-    family = serde_json::to_string(platform)?,
-    arch = serde_json::to_string(arch)?,
-    target = serde_json::to_string(&target)?,
-  )));
-  let mut webview_builder = WebViewBuilder::new_with_web_context(&mut web_context.inner)
+  let webview_builder = WebViewBuilder::new_with_web_context(&mut web_context.inner)
     .with_devtools(true)
     .with_id(&options.label)
     .with_focused(window_options.focus)
@@ -203,6 +104,13 @@ pub(crate) fn create_webview(
     .with_hotkeys_zoom(options.zoom_hotkeys_enabled)
     .with_general_autofill_enabled(options.general_autofill_enabled);
 
+  let (webview_bounds, mut webview_builder) = apply_webview_bounds(
+    window,
+    webview_builder,
+    options.bounds,
+    options.auto_resize,
+    child,
+  );
   if let Some(background_throttling) = &options.background_throttling {
     webview_builder = webview_builder.with_background_throttling(match background_throttling {
       BackgroundThrottlingPolicy::Disabled => {
@@ -222,51 +130,19 @@ pub(crate) fn create_webview(
   if let Some(color) = window_options.background_color {
     webview_builder = webview_builder.with_background_color(color.into());
   }
-  // Before building the drag-drop handler, extract owned copies of what it needs:
-  let child = options.child;
+
   if options.drag_drop_enabled {
-    let _window_id_ = window_id.clone();
+    let window_id_ = window_id.clone();
     let engine_manager = manager.clone();
-    // Wert herauskopieren, damit der Closure 'static ist
-    let window_enabled_drag_drop = window_options.enable_drag_drop;
-    webview_builder = webview_builder.with_drag_drop_handler(move |event| {
-      let event = match event {
-        WryDragDropEvent::Enter {
-          paths,
-          position: (x, y),
-        } => DragDropEvent::Enter {
-          paths,
-          position: PhysicalPosition::new(x as _, y as _),
-        },
-        WryDragDropEvent::Over { position: (x, y) } => DragDropEvent::Over {
-          position: PhysicalPosition::new(x as _, y as _),
-        },
-        WryDragDropEvent::Drop {
-          paths,
-          position: (x, y),
-        } => DragDropEvent::Drop {
-          paths,
-          position: PhysicalPosition::new(x as _, y as _),
-        },
-        WryDragDropEvent::Leave => DragDropEvent::Leave,
-        _ => unimplemented!(),
-      };
-      let message = if child == false || window_enabled_drag_drop {
-        EventLoopMessage::SynthesizedWindowEvent(
-          *_window_id_.lock().unwrap(),
-          id,
-          SynthesizedWindowEvent::DragDrop(event),
-        )
-      } else {
-        EventLoopMessage::WebviewEvent(
-          *_window_id_.lock().unwrap(),
-          id,
-          WebViewEvent::DragDrop(event),
-        )
-      };
-      let _ = engine_manager.proxy_emitter(message);
-      true
-    });
+    let window_drag_drop = window_options.enable_drag_drop;
+    webview_builder = apply_drag_drop_handlers(
+      engine_manager,
+      webview_builder,
+      window_id_,
+      id,
+      window_drag_drop,
+      child,
+    );
   }
   if let Some(policy) = options.navigation_policy.clone() {
     let initial_url = match &options.url {
@@ -361,40 +237,7 @@ pub(crate) fn create_webview(
       to_wry_permission_response(response(kind))
     });
   }
-  let webview_bounds = if let Some(bounds) = options.bounds {
-    let bounds: RectWrapper = bounds.into();
-    let bounds = bounds.0;
-    let scale_factor = window.scale_factor();
-    let position = bounds.position.to_logical::<f32>(scale_factor);
-    let size = bounds.size.to_logical::<f32>(scale_factor);
-    webview_builder = webview_builder.with_bounds(bounds);
-    let window_size = window.inner_size().to_logical::<f32>(scale_factor);
-    if options.auto_resize {
-      Some(WebviewBounds {
-        x_rate: position.x / window_size.width,
-        y_rate: position.y / window_size.height,
-        width_rate: size.width / window_size.width,
-        height_rate: size.height / window_size.height,
-      })
-    } else {
-      None
-    }
-  } else {
-    if child {
-      webview_builder = webview_builder.with_bounds(taurino_core::native::wry::Rect {
-        position: taurino_core::schema::LogicalPosition::new(0, 0).into(),
-        size: window.inner_size().into(),
-      });
-      Some(WebviewBounds {
-        x_rate: 0.,
-        y_rate: 0.,
-        width_rate: 1.,
-        height_rate: 1.,
-      })
-    } else {
-      None
-    }
-  };
+
   let mut webview_builder = engine_manager.clone().connection()?.apply(
     webview_builder,
     &options.url,
@@ -408,78 +251,8 @@ pub(crate) fn create_webview(
       webview_builder.with_initialization_script(initialization_script.script)
     };
   }
-  let webview = match child {
-    #[cfg(not(any(
-      target_os = "windows",
-      target_os = "macos",
-      target_os = "ios",
-      target_os = "android"
-    )))]
-    true => {
-      let vbox = window.default_vbox().ok_or_else(|| {
-        anyhow::anyhow!(
-          "failed to create child WebView `{}`: \
-                     window does not provide a GTK default vbox",
-          options.label
-        )
-      })?;
-      webview_builder.build_gtk(vbox)
-    }
-    #[cfg(any(
-      target_os = "windows",
-      target_os = "macos",
-      target_os = "ios",
-      target_os = "android"
-    ))]
-    true => webview_builder.build_as_child(window),
-    false => {
-      #[cfg(any(
-        target_os = "windows",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "android"
-      ))]
-      let builder = webview_builder.build(window);
-      #[cfg(not(any(
-        target_os = "windows",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "android"
-      )))]
-      let builder = {
-        let vbox = window.default_vbox().ok_or_else(|| {
-          anyhow::anyhow!(
-            "failed to create WebView `{}`: \
-                         window does not provide a GTK default vbox",
-            options.label
-          )
-        })?;
-        webview_builder.build_gtk(vbox)
-      };
-      builder
-    }
-  }
-  .map_err(|error| anyhow::anyhow!("failed to build WebView `{}`: {error}", options.label))?;
-  if child == false {
-    #[cfg(any(
-      target_os = "linux",
-      target_os = "dragonfly",
-      target_os = "freebsd",
-      target_os = "netbsd",
-      target_os = "openbsd"
-    ))]
-    undecorated_resizing::attach_resize_handler(&webview);
-    #[cfg(windows)]
-    if window.is_resizable() && !window.is_decorated() {
-      undecorated_resizing::attach_resize_handler(window.hwnd(), window.has_undecorated_shadow());
-    }
-  }
-  let context_key = if automation_enabled {
-    None
-  } else {
-    web_context_key.clone()
-  };
-  webview.evaluate_script("console.log(window.origin)")?; // __TAURINO_INTERNALS__
+  let webview = apply_build_webview(&window, webview_builder, &options.label, child)?;
+  webview.evaluate_script("console.log(window.__TAURINO_INTERNALS__)")?; 
   let webview = WebView::new(
     id,
     options.label.clone(),
@@ -668,109 +441,3 @@ pub fn create_window(
     webviews_manager,
   ))
 }
-
-/*
- */
-
-/*
-fn new_window_handler(
-    policy: &NewWindowPolicy,
-    url: Url,
-    features: NewWindowFeatures,
-    engine_manager: Arc<EngineManager>,
-) -> Result<NewWindowResponse> {
-    match policy.evaluate(&url) {
-        NewWindowAction::Allow => Ok(NewWindowResponse::Allow),
-
-        NewWindowAction::Deny => Ok(NewWindowResponse::Deny),
-
-        NewWindowAction::Create { window } => {
-            let mut window_options = *window;
-
-            // requested URL in die Konfiguration des neuen WebViews übernehmen
-            //
-            // z. B.:
-            // window_options.webview.url = WebviewUrl::External(url);
-
-            // window.open()-Features ggf. übernehmen
-            //
-            // if let Some(size) = features.size() {
-            //     window_options.width = Some(size.width);
-            //     window_options.height = Some(size.height);
-            // }
-            //
-            // if let Some(position) = features.position() {
-            //     window_options.x = Some(position.x);
-            //     window_options.y = Some(position.y);
-            // }
-
-            let window_id = engine_manager.create_window_from_new_window_request(
-                window_options,
-                features,
-            )?;
-
-            Ok(NewWindowResponse::Create { window_id })
-        }
-    }
-}
-
-
-
-
-
-*/
-
-/*
-
-new_window_handler
-
-
-
-
-NewWindowAction::Create { window } => {
-    let mut window_options = *window;
-
-    // requested URL setzen
-    // window_options.webview.url = WebviewUrl::External(url);
-
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    engine_manager
-        .proxy()?
-        .send_event(Message::CreateWindow(CreateWindowRequest {
-            options: window_options,
-            response: tx,
-        }))
-        .map_err(|_| anyhow!("failed to send CreateWindow request"))?;
-
-    let window_id = rx
-        .recv()
-        .map_err(|_| anyhow!("CreateWindow response channel closed"))??;
-
-    Ok(NewWindowResponse::Create { window_id })
-}
-
-
-eventloop
-
-
-
-match event {
-    Event::UserEvent(Message::CreateWindow(request)) => {
-        let result = {
-            let mut window_manager = engine_manager.window_mut()?;
-
-            window_manager.open_window(
-                &request.options,
-                event_loop_target,
-            )
-        };
-
-        let _ = request.response.send(result);
-    }
-
-    // ...
-}
-
-
-*/

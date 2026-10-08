@@ -237,6 +237,7 @@ impl Engine {
       center: true,
       enable_drag_drop: true,
       webviews: vec![WebViewConfig {
+        use_https_scheme: true,
         drag_drop_enabled: true,
         // Configure this WebView as a child of the native
         // Taurino window.
