@@ -9,7 +9,8 @@ use std::{
 use anyhow::Result;
 
 use taurino_core::{
-  EngineWindowTarget, EventLoopMessage,
+  EngineWindowTarget, EventLoopMessage, NewWindowFeatures, NewWindowOpener, NewWindowResponse,
+  WebView, WebViewManager, from_wry_permission_kind,
   menu::RawWindow,
   native::wry::{DragDropEvent as WryDragDropEvent, WebContext as WryContext, WebViewBuilder},
   platforms::{MonitorExt, calculate_window_center_position},
@@ -19,15 +20,16 @@ use taurino_core::{
     webview::{BackgroundThrottlingPolicy, WebViewConfig, WebviewBounds, WebviewUrl},
     window::{WindowConfig, WindowId, WindowId as CoreWindowId},
   },
-  tools::{arc_mut, find_monitor_for_position, lock_state, stores::WebContext, wrappers::RectWrapper},
-  webview::{
-    NewWindowFeatures, NewWindowOpener, NewWindowResponse, WebViewManager, WebViewWrapper, from_wry_permission_kind,
-    to_wry_permission_response,
+  to_wry_permission_response,
+  tools::{
+    arc_mut, find_monitor_for_position, lock_state, stores::WebContext, wrappers::RectWrapper,
   },
   window::{Window, WindowBuilder},
 };
 #[cfg(windows)]
-use taurino_core::{platforms::windows::utils::apply_shadow_correction, schema::FocusState, tools::ArcMut};
+use taurino_core::{
+  platforms::windows::utils::apply_shadow_correction, schema::FocusState, tools::ArcMut,
+};
 use url::Url;
 
 use crate::{
@@ -57,11 +59,9 @@ use taurino_core::native::wry::{WebViewBuilderExtDarwin, WebViewExtMacOS};
   target_os = "netbsd",
   target_os = "openbsd"
 ))]
-use taurino_core::{
-  native::{
-    tao::platform::unix::WindowExtUnix,
-    wry::{WebViewBuilderExtUnix, WebViewExtUnix},
-  },
+use taurino_core::native::{
+  tao::platform::unix::WindowExtUnix,
+  wry::{WebViewBuilderExtUnix, WebViewExtUnix},
 };
 
 use taurino_core::window::undecorated_resizing;
@@ -70,8 +70,7 @@ use taurino_core::window::undecorated_resizing;
 // ============================================================================
 #[cfg(windows)]
 use taurino_core::native::{tao::platform::windows::WindowExtWindows, wry::WebViewExtWindows};
-#[cfg(windows)]
-use taurino_core::window::undecorated_resizing;
+
 pub(crate) fn create_webview(
   engine_manager: Arc<EngineManager>,
   window_id: Arc<Mutex<WindowId>>,
@@ -80,7 +79,7 @@ pub(crate) fn create_webview(
   window_options: &WindowConfig,
   window: &taurino_core::native::tao::window::Window,
   #[cfg(windows)] focused_webview: ArcMut<FocusState>,
-) -> Result<WebViewWrapper> {
+) -> Result<WebView> {
   let manager = engine_manager.clone();
   let proxy = manager.proxy.clone();
 
@@ -94,12 +93,18 @@ pub(crate) fn create_webview(
   let web_context = match entry {
     Occupied(occupied) => {
       let occupied = occupied.into_mut();
-      occupied.referenced_by_webviews.insert(options.label.clone());
+      occupied
+        .referenced_by_webviews
+        .insert(options.label.clone());
       occupied
     }
     Vacant(vacant) => {
       let mut web_context = WryContext::new(web_context_key.clone());
-      web_context.set_allows_automation(if automation_enabled { is_first_context } else { false });
+      web_context.set_allows_automation(if automation_enabled {
+        is_first_context
+      } else {
+        false
+      });
       vacant.insert(WebContext {
         inner: web_context,
         referenced_by_webviews: [options.label.clone()].into(),
@@ -120,9 +125,15 @@ pub(crate) fn create_webview(
 
   if let Some(background_throttling) = &options.background_throttling {
     webview_builder = webview_builder.with_background_throttling(match background_throttling {
-      BackgroundThrottlingPolicy::Disabled => taurino_core::native::wry::BackgroundThrottlingPolicy::Disabled,
-      BackgroundThrottlingPolicy::Suspend => taurino_core::native::wry::BackgroundThrottlingPolicy::Suspend,
-      BackgroundThrottlingPolicy::Throttle => taurino_core::native::wry::BackgroundThrottlingPolicy::Throttle,
+      BackgroundThrottlingPolicy::Disabled => {
+        taurino_core::native::wry::BackgroundThrottlingPolicy::Disabled
+      }
+      BackgroundThrottlingPolicy::Suspend => {
+        taurino_core::native::wry::BackgroundThrottlingPolicy::Suspend
+      }
+      BackgroundThrottlingPolicy::Throttle => {
+        taurino_core::native::wry::BackgroundThrottlingPolicy::Throttle
+      }
     });
   }
   if options.javascript_disabled {
@@ -167,7 +178,11 @@ pub(crate) fn create_webview(
           SynthesizedWindowEvent::DragDrop(event),
         )
       } else {
-        EventLoopMessage::WebviewEvent(*_window_id_.lock().unwrap(), id, WebViewEvent::DragDrop(event))
+        EventLoopMessage::WebviewEvent(
+          *_window_id_.lock().unwrap(),
+          id,
+          WebViewEvent::DragDrop(event),
+        )
       };
       let _ = engine_manager.proxy_emitter(message);
       true
@@ -300,13 +315,18 @@ pub(crate) fn create_webview(
       None
     }
   };
-  let webview_builder =
-    engine_manager
-      .clone()
-      .connection()?
-      .apply(webview_builder, &options.url, options.use_https_scheme)?;
+  let webview_builder = engine_manager.clone().connection()?.apply(
+    webview_builder,
+    &options.url,
+    options.use_https_scheme,
+  )?;
   let webview = match child {
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
+    #[cfg(not(any(
+      target_os = "windows",
+      target_os = "macos",
+      target_os = "ios",
+      target_os = "android"
+    )))]
     true => {
       let vbox = window.default_vbox().ok_or_else(|| {
         anyhow::anyhow!(
@@ -317,12 +337,27 @@ pub(crate) fn create_webview(
       })?;
       webview_builder.build_gtk(vbox)
     }
-    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android"))]
+    #[cfg(any(
+      target_os = "windows",
+      target_os = "macos",
+      target_os = "ios",
+      target_os = "android"
+    ))]
     true => webview_builder.build_as_child(window),
     false => {
-      #[cfg(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android"))]
+      #[cfg(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "android"
+      ))]
       let builder = webview_builder.build(window);
-      #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
+      #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "android"
+      )))]
       let builder = {
         let vbox = window.default_vbox().ok_or_else(|| {
           anyhow::anyhow!(
@@ -356,7 +391,7 @@ pub(crate) fn create_webview(
   } else {
     web_context_key.clone()
   };
-  let webview = WebViewWrapper::new(
+  let webview = WebView::new(
     id,
     options.label.clone(),
     window_id,
@@ -415,11 +450,15 @@ pub fn create_window(
         );
         if window_size.width > constraint.width || window_size.height > constraint.height {
           if window_size.width > constraint.width {
-            inner_size.width = inner_size.width.saturating_sub(window_size.width - constraint.width);
+            inner_size.width = inner_size
+              .width
+              .saturating_sub(window_size.width - constraint.width);
             window_size.width = constraint.width;
           }
           if window_size.height > constraint.height {
-            inner_size.height = inner_size.height.saturating_sub(window_size.height - constraint.height);
+            inner_size.height = inner_size
+              .height
+              .saturating_sub(window_size.height - constraint.height);
             window_size.height = constraint.height;
           }
           window_builder.inner.window.inner_size = Some(inner_size.into());
@@ -442,7 +481,9 @@ pub fn create_window(
   // monitor up front so the window is created fullscreen on that display.
   #[cfg(any(target_os = "macos", target_os = "linux"))]
   if let (true, Some(position)) = (is_fullscreen, initial_position) {
-    if let Some(target_monitor) = find_monitor_for_position(window_target.available_monitors(), position) {
+    if let Some(target_monitor) =
+      find_monitor_for_position(window_target.available_monitors(), position)
+    {
       window_builder.inner.window.fullscreen = Some(Fullscreen::Borderless(Some(target_monitor)));
     }
   }
@@ -459,7 +500,9 @@ pub fn create_window(
       window_builder.inner = window_builder.inner.with_automatic_window_tabbing(false);
     }
   }
-  let theme = window_builder.get_theme().unwrap_or(taurino_core::schema::Theme::Light);
+  let theme = window_builder
+    .get_theme()
+    .unwrap_or(taurino_core::schema::Theme::Light);
   let window = window_builder.inner.build(window_target)?;
   let menu = {
     let raw = RawWindow {
@@ -483,7 +526,11 @@ pub fn create_window(
       default_vbox: window.default_vbox(),
       _marker: &std::marker::PhantomData,
     };
-    Some(engine_manager.menu()?.create_window_menu(raw, theme, None)?)
+    Some(
+      engine_manager
+        .menu()?
+        .create_window_menu(raw, theme, None)?,
+    )
   };
   // On macOS, `with_position` uses the content origin; the title bar is added
   // above it. `set_outer_position` is needed for precise window placement.

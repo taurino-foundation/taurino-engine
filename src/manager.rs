@@ -78,7 +78,8 @@ use crate::{trayicon::TrayIconManager, window::WindowManager};
 ///
 /// `event` is currently represented as a string slice. It may be
 /// replaced by a dedicated event enum once the window event API is finalized.
-pub type WindowEventHandler = Box<dyn Fn(Arc<EngineManager>, String, WindowEvent) + Send + Sync + 'static>;
+pub type WindowEventHandler =
+  Box<dyn Fn(Arc<EngineManager>, String, WindowEvent) + Send + Sync + 'static>;
 
 /// Callback invoked for global WebView events.
 ///
@@ -97,7 +98,8 @@ pub type WindowEventHandler = Box<dyn Fn(Arc<EngineManager>, String, WindowEvent
 ///
 /// `event` is currently represented as a string slice. It may be
 /// replaced by a dedicated event enum once the WebView event API is finalized.
-pub type WebViewEventHandler = Box<dyn Fn(Arc<EngineManager>, String, String, WebViewEvent) + Send + Sync + 'static>;
+pub type WebViewEventHandler =
+  Box<dyn Fn(Arc<EngineManager>, String, String, WebViewEvent) + Send + Sync + 'static>;
 
 /// Provides access to the engine's shared managers and global event handlers.
 ///
@@ -184,7 +186,10 @@ impl EngineManager {
   pub fn connection(self: &Arc<Self>) -> Result<Arc<IPCRuntime>> {
     Ok(self.ipc_runtime.clone())
   }
-  pub fn proxy_emitter(self: &Arc<Self>, message: EventLoopMessage) -> Result<(), EngineLoopClosed> {
+  pub fn proxy_emitter(
+    self: &Arc<Self>,
+    message: EventLoopMessage,
+  ) -> Result<(), EngineLoopClosed> {
     Ok(self.proxy.send_event(message)?)
   }
 
@@ -224,7 +229,11 @@ impl EngineManager {
   /// Emits an event to the registered global window event handler.
   ///
   /// If no handler is registered, this method performs no action.
-  pub fn emit_global_window_event(self: &Arc<Self>, window_label: impl Into<String>, event: WindowEvent) -> Result<()> {
+  pub fn emit_global_window_event(
+    self: &Arc<Self>,
+    window_label: impl Into<String>,
+    event: WindowEvent,
+  ) -> Result<()> {
     let handler = self
       ._global_window_event_handler
       .lock()
@@ -285,7 +294,12 @@ impl EngineManager {
       .map_err(|_| anyhow!("global WebView event handler mutex is poisoned"))?;
 
     if let Some(handler) = handler.as_ref() {
-      handler(self.clone(), window_label.into(), webview_label.into(), event);
+      handler(
+        self.clone(),
+        window_label.into(),
+        webview_label.into(),
+        event,
+      );
     }
 
     Ok(())

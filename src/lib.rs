@@ -368,22 +368,6 @@ impl Engine {
     })
   }
 
-  #[cfg(any(target_os = "macos", target_os = "ios"))]
-  fn fetch_data_store_identifiers<F: FnOnce(Vec<[u8; 16]>) + Send + 'static>(&self, cb: F) -> Result<()> {
-    if let Err(e) = WebView::fetch_data_store_identifiers(cb) {
-      // this shouldn't ever happen because we're running on the main thread
-      // but let's be safe and warn here
-      taurino_core::taurino_log!(taurino_core::logging::Level::Error, "{e}");
-    }
-  }
-
-  #[cfg(any(target_os = "macos", target_os = "ios"))]
-  fn remove_data_store<F: FnOnce(Result<()>) + Send + 'static>(&self, uuid: [u8; 16], cb: F) -> Result<()> {
-    WebView::remove_data_store(&uuid, move |res| {
-      cb(res.map_err(|e| anyhow::anyhow!("failed to remove data store: {e}")))
-    })
-  }
-
   /// Returns the shared application resource table.
   ///
   /// The returned value references the same underlying table owned by the

@@ -8,20 +8,22 @@ use crate::{manager::EngineManager, window::factory::create_webview};
 use anyhow::{Result, anyhow};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use taurino_core::schema::webview::WebContentProcessTerminatePolicy;
-#[cfg(windows)]
-use taurino_core::{schema::FocusState, tools::ArcMut};
 use taurino_core::{
+  NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, WebViewManager,
   schema::{
     webview::{NewWindowAction, NewWindowPolicy, WebViewConfig, WebViewId},
     window::{WindowConfig, WindowId},
   },
-  webview::{NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, WebViewManager},
 };
+#[cfg(windows)]
+use taurino_core::{schema::FocusState, tools::ArcMut};
 use url::Url;
 
 pub type PermissionRequestHandler = dyn Fn(PermissionKind) -> PermissionResponse + Send + Sync;
 
-pub fn permission_request_handler(_eng: Arc<EngineManager>) -> Result<Box<PermissionRequestHandler>> {
+pub fn permission_request_handler(
+  _eng: Arc<EngineManager>,
+) -> Result<Box<PermissionRequestHandler>> {
   // This fixed permission policy does not require access to the engine manager.
   Ok(Box::new(|kind| match kind {
     PermissionKind::Microphone => PermissionResponse::Allow,
@@ -81,7 +83,10 @@ pub fn on_web_content_process_terminate_handler(
     };
 
     let Some(window) = window_manager.get_by_id(window_id) else {
-      eprintln!("window {:?} not found after web content process termination", window_id);
+      eprintln!(
+        "window {:?} not found after web content process termination",
+        window_id
+      );
       return;
     };
 
@@ -121,7 +126,10 @@ pub fn attach_webview(
   #[cfg(windows)] focused_webview: ArcMut<FocusState>,
 ) -> Result<WebViewId> {
   if webview_manager.contains_label(&options.label) {
-    return Err(anyhow!("WebView with label {:?} is already registered", options.label));
+    return Err(anyhow!(
+      "WebView with label {:?} is already registered",
+      options.label
+    ));
   }
 
   let id = webview_manager.next_webview_id();
