@@ -63,7 +63,14 @@ use taurino_core::native::{
   tao::platform::unix::WindowExtUnix,
   wry::{WebViewBuilderExtUnix, WebViewExtUnix},
 };
-
+#[cfg(any(
+    windows,
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+))]
 use taurino_core::window::undecorated_resizing;
 // ============================================================================
 // Windows
