@@ -17,7 +17,9 @@ use taurino_core::{
   schema::{
     PhysicalPosition, PhysicalSize,
     event::{DragDropEvent, SynthesizedWindowEvent, WebViewEvent},
-    webview::{BackgroundThrottlingPolicy, WebViewConfig, WebviewBounds, WebviewUrl},
+    webview::{
+      BackgroundThrottlingPolicy, InitializationScript, WebViewConfig, WebviewBounds, WebviewUrl,
+    },
     window::{WindowConfig, WindowId, WindowId as CoreWindowId},
   },
   to_wry_permission_response,
@@ -64,12 +66,12 @@ use taurino_core::native::{
   wry::{WebViewBuilderExtUnix, WebViewExtUnix},
 };
 #[cfg(any(
-    windows,
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
+  windows,
+  target_os = "linux",
+  target_os = "dragonfly",
+  target_os = "freebsd",
+  target_os = "netbsd",
+  target_os = "openbsd",
 ))]
 use taurino_core::window::undecorated_resizing;
 // ============================================================================
@@ -87,6 +89,31 @@ pub(crate) fn create_webview(
   window: &taurino_core::native::tao::window::Window,
   #[cfg(windows)] focused_webview: ArcMut<FocusState>,
 ) -> Result<WebView> {
+  let mut all_initialization_scripts: Vec<InitializationScript> = vec![];
+
+  fn main_frame_script(script: String) -> InitializationScript {
+    InitializationScript {
+      script,
+      for_main_frame_only: true,
+    }
+  }
+
+  all_initialization_scripts.push(main_frame_script(
+    r"
+        Object.defineProperty(window, 'isTaurino', {
+          value: true,
+        });
+
+        if (!window.__TAURINO_INTERNALS__) {
+          Object.defineProperty(window, '__TAURINO_INTERNALS__', {
+            value: {
+              plugins: {}
+            }
+          })
+        }
+      "
+    .to_owned(),
+  ));
   let manager = engine_manager.clone();
   let proxy = manager.proxy.clone();
 
@@ -120,7 +147,60 @@ pub(crate) fn create_webview(
     }
   };
 
+  // Aktuelle Prozess- und Thread-Informationen
+  let pid = std::process::id();
+  let thread_id = format!("{:?}", std::thread::current().id());
+
+  // Compile-Time-Informationen
+  let os = std::env::consts::OS;
+  let platform = std::env::consts::FAMILY;
+  let arch = std::env::consts::ARCH;
+
+  // Vollständiges Rust Target
+  // TARGET wird typischerweise über build.rs gesetzt.
+  // Hier zunächst Compile-Time OS / Architektur verwenden.
+  let target = format!("{arch}-{os}");
+
+  all_initialization_scripts.push(main_frame_script(format!(
+    r#"
+        Object.defineProperty(window.__TAURINO_INTERNALS__, 'metadata', {{
+            value: Object.freeze({{
+                currentWindow: Object.freeze({{
+                    label: {current_window_label}
+                }}),
+
+                currentWebview: Object.freeze({{
+                    label: {current_webview_label}
+                }}),
+
+                process: Object.freeze({{
+                    pid: {pid},
+                    threadId: {thread_id}
+                }}),
+
+                platform: Object.freeze({{
+                    os: {os},
+                    family: {family},
+                    arch: {arch},
+                    target: {target}
+                }})
+            }}),
+            writable: false,
+            configurable: false,
+            enumerable: true
+        }});
+    "#,
+    current_window_label = serde_json::to_string(&window_options.label)?,
+    current_webview_label = serde_json::to_string(&options.label)?,
+    pid = pid,
+    thread_id = serde_json::to_string(&thread_id)?,
+    os = serde_json::to_string(os)?,
+    family = serde_json::to_string(platform)?,
+    arch = serde_json::to_string(arch)?,
+    target = serde_json::to_string(&target)?,
+  )));
   let mut webview_builder = WebViewBuilder::new_with_web_context(&mut web_context.inner)
+    .with_devtools(true)
     .with_id(&options.label)
     .with_focused(window_options.focus)
     .with_transparent(window_options.transparent)
@@ -322,11 +402,19 @@ pub(crate) fn create_webview(
       None
     }
   };
-  let webview_builder = engine_manager.clone().connection()?.apply(
+  let mut webview_builder = engine_manager.clone().connection()?.apply(
     webview_builder,
     &options.url,
     options.use_https_scheme,
   )?;
+
+  for initialization_script in all_initialization_scripts {
+    webview_builder = if initialization_script.for_main_frame_only {
+      webview_builder.with_initialization_script_for_main_only(initialization_script.script, true)
+    } else {
+      webview_builder.with_initialization_script(initialization_script.script)
+    };
+  }
   let webview = match child {
     #[cfg(not(any(
       target_os = "windows",
@@ -398,6 +486,7 @@ pub(crate) fn create_webview(
   } else {
     web_context_key.clone()
   };
+  // webview.evaluate_script("console.log(window.__TAURINO_INTERNALS__)")?;
   let webview = WebView::new(
     id,
     options.label.clone(),

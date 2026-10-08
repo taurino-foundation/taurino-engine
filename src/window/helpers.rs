@@ -2,17 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-use std::sync::{Arc, Mutex};
-
 use crate::{manager::EngineManager, window::factory::create_webview};
 use anyhow::{Result, anyhow};
+use std::{
+  collections::{
+    HashSet,
+    hash_map::Entry::{Occupied, Vacant},
+  },
+  sync::{Arc, Mutex},
+};
+use taurino_core::native::wry::WebContext as WryContext;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use taurino_core::schema::webview::WebContentProcessTerminatePolicy;
 use taurino_core::{
   NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, WebViewManager,
+  native::wry::WebViewBuilder,
   schema::{
     webview::{NewWindowAction, NewWindowPolicy, WebViewConfig, WebViewId},
     window::{WindowConfig, WindowId},
+  },
+  tools::{
+    lock_state,
+    stores::{WebContext, WebContextStore},
   },
 };
 #[cfg(windows)]
@@ -153,4 +164,42 @@ pub fn attach_webview(
   webview_manager.insert(webview)?;
 
   Ok(id)
+}
+
+pub(crate) fn with_webcontext<R>(
+  browser_context: &WebContextStore,
+  options: &WebViewConfig,
+  f: impl FnOnce(WebViewBuilder<'_>) -> Result<R>,
+) -> Result<R> {
+  let mut web_context = lock_state(&browser_context, "browser_context")?;
+  let is_first_context = web_context.is_empty();
+  // the context must be stored on the HashMap because it must outlive the WebView on macOS
+  let automation_enabled = std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true");
+  let web_context_key = &options.data_directory;
+  let entry = web_context.entry(web_context_key.clone());
+  let web_context = match entry {
+    Occupied(occupied) => {
+      let occupied = occupied.into_mut();
+      occupied
+        .referenced_by_webviews
+        .insert(options.label.clone());
+      occupied
+    }
+    Vacant(vacant) => {
+      let mut web_context = WryContext::new(web_context_key.clone());
+      web_context.set_allows_automation(if automation_enabled {
+        is_first_context
+      } else {
+        false
+      });
+      vacant.insert(WebContext {
+        inner: web_context,
+        referenced_by_webviews: [options.label.clone()].into(),
+        registered_custom_protocols: HashSet::new(),
+      })
+    }
+  };
+  let builder = WebViewBuilder::new_with_web_context(&mut web_context.inner);
+
+  f(builder)
 }
