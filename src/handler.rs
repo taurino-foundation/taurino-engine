@@ -258,6 +258,19 @@ impl EngineEventHandler {
 
         window.set_fullscreen(fullscreen)?;
       }
+      EventLoopMessage::EvalScript(window_id, webview_id, _script) => {
+        let window = {
+          let window_manager = self.manager.window()?;
+
+          window_manager
+            .get_by_id(window_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("window with id {window_id:?} not found"))?
+        };
+        let _js_evaluator = window.js_evaluator_by_id(webview_id)?;
+        // _js_evaluator.reject(id, error)
+        // _js_evaluator.resolve(id, value)
+      }
     }
 
     Ok(())

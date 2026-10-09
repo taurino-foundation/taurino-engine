@@ -1,50 +1,28 @@
 use crate::{manager::EngineManager, window::factory::create_webview};
+
 use anyhow::{Result, anyhow};
-use std::{
-  collections::{
-    HashMap, HashSet,
-    hash_map::Entry::{Occupied, Vacant},
-  },
-  path::PathBuf,
-  sync::{Arc, Mutex, MutexGuard},
-};
-#[cfg(windows)]
-use taurino_core::native::tao::platform::windows::WindowExtWindows;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use taurino_core::schema::webview::WebContentProcessTerminatePolicy;
-#[cfg(any(
-  windows,
-  target_os = "linux",
-  target_os = "dragonfly",
-  target_os = "freebsd",
-  target_os = "netbsd",
-  target_os = "openbsd",
-))]
-use taurino_core::window::undecorated_resizing;
+/* use serialize_to_javascript::{Template, default_template}; */
+
+use std::sync::{Arc, Mutex};
+
 use taurino_core::{
-  EventLoopMessage,
-  native::wry::{DragDropEvent as WryDragDropEvent, WebContext as WryContext},
+  EventLoopMessage, NewWindowFeatures, NewWindowOpener, NewWindowResponse, PermissionKind,
+  PermissionResponse, WebViewManager,
+  native::wry::{DragDropEvent as WryDragDropEvent, WebViewBuilder},
   schema::{
-    PhysicalPosition, Rect,
+    PhysicalPosition,
     event::{DragDropEvent, SynthesizedWindowEvent, WebViewEvent},
-    webview::{InitializationScript, WebviewBounds},
-  },
-  tools::wrappers::RectWrapper,
-};
-use taurino_core::{
-  NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse, WebViewManager,
-  native::wry::WebViewBuilder,
-  schema::{
     webview::{NewWindowAction, NewWindowPolicy, WebViewConfig, WebViewId},
     window::{WindowConfig, WindowId},
   },
-  tools::{
-    lock_state,
-    stores::{WebContext, WebContextStore},
-  },
 };
+
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use taurino_core::schema::webview::WebContentProcessTerminatePolicy;
+
 #[cfg(windows)]
-use taurino_core::{schema::FocusState, tools::ArcMut};
+use taurino_core::{native::wry::WebViewExtWindows, schema::FocusState, tools::ArcMut};
+
 use url::Url;
 
 pub type PermissionRequestHandler = dyn Fn(PermissionKind) -> PermissionResponse + Send + Sync;
@@ -78,7 +56,7 @@ pub fn new_window_handler(
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-type OnWebContentProcessTerminateHandler = dyn Fn();
+pub type OnWebContentProcessTerminateHandler = dyn Fn();
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub fn on_web_content_process_terminate_handler(
@@ -236,396 +214,98 @@ pub(crate) fn apply_drag_drop_handlers<'a>(
   })
 }
 
-pub(crate) fn all_initialization_scripts(
-  window_label: &str,
-  webview_label: &str,
-) -> Result<Vec<InitializationScript>> {
-  let mut all_initialization_scripts: Vec<InitializationScript> = vec![];
-
-  fn main_frame_script(script: String) -> InitializationScript {
-    InitializationScript {
-      script,
-      for_main_frame_only: true,
-    }
-  }
-  all_initialization_scripts.push(main_frame_script(
-    r"
-        Object.defineProperty(window, 'isTaurino', {
-          value: true,
-        });
-
-        if (!window.__TAURINO_INTERNALS__) {
-          Object.defineProperty(window, '__TAURINO_INTERNALS__', {
-            value: {
-              plugins: {}
-            }
-          })
-        }
-      "
-    .to_owned(),
-  ));
-
-  // Aktuelle Prozess- und Thread-Informationen
-  let pid = std::process::id();
-
-  // Compile-Time-Informationen
-  let os = std::env::consts::OS;
-  let platform = std::env::consts::FAMILY;
-  let arch = std::env::consts::ARCH;
-  let target = format!("{arch}-{os}");
-
-  all_initialization_scripts.push(main_frame_script(format!(
-    r#"
-        Object.defineProperty(window.__TAURINO_INTERNALS__, 'metadata', {{
-            value: Object.freeze({{
-                currentWindow: Object.freeze({{
-                    label: {current_window_label}
-                }}),
-
-                currentWebview: Object.freeze({{
-                    label: {current_webview_label}
-                }}),
-
-                process: Object.freeze({{
-                    pid: {pid},
-                }}),
-
-                platform: Object.freeze({{
-                    os: {os},
-                    family: {family},
-                    arch: {arch},
-                    target: {target}
-                }})
-            }}),
-            writable: false,
-            configurable: false,
-            enumerable: true
-        }});
-    "#,
-    current_window_label = serde_json::to_string(window_label)?,
-    current_webview_label = serde_json::to_string(webview_label)?,
-    pid = pid,
-    os = serde_json::to_string(os)?,
-    family = serde_json::to_string(platform)?,
-    arch = serde_json::to_string(arch)?,
-    target = serde_json::to_string(&target)?,
-  )));
-
-  Ok(all_initialization_scripts)
-}
-
-pub(crate) fn apply_webview_bounds<'a>(
-  window: &'a taurino_core::native::tao::window::Window,
+pub(crate) fn apply_new_window_requested<'a>(
+  manager: Arc<EngineManager>,
   mut webview_builder: WebViewBuilder<'a>,
-  bounds: Option<Rect>,
-  auto_resize: bool,
-  child: bool,
-) -> (Option<WebviewBounds>, WebViewBuilder<'a>) {
-  let webview_bounds = if let Some(bounds) = bounds {
-    let bounds: RectWrapper = bounds.into();
-    let bounds = bounds.0;
-    let scale_factor = window.scale_factor();
-    let position = bounds.position.to_logical::<f32>(scale_factor);
-    let size = bounds.size.to_logical::<f32>(scale_factor);
-    webview_builder = webview_builder.with_bounds(bounds);
-    let window_size = window.inner_size().to_logical::<f32>(scale_factor);
-    if auto_resize {
-      Some(WebviewBounds {
-        x_rate: position.x / window_size.width,
-        y_rate: position.y / window_size.height,
-        width_rate: size.width / window_size.width,
-        height_rate: size.height / window_size.height,
-      })
-    } else {
-      None
-    }
-  } else {
-    if child {
-      webview_builder = webview_builder.with_bounds(taurino_core::native::wry::Rect {
-        position: taurino_core::schema::LogicalPosition::new(0, 0).into(),
-        size: window.inner_size().into(),
-      });
-      Some(WebviewBounds {
-        x_rate: 0.,
-        y_rate: 0.,
-        width_rate: 1.,
-        height_rate: 1.,
-      })
-    } else {
-      None
-    }
-  };
-  (webview_bounds, webview_builder)
-}
+  webview_id: WebViewId,
+  new_window_policy: Option<NewWindowPolicy>,
+) -> Result<WebViewBuilder<'a>> {
+  if let Some(policy) = new_window_policy {
+    let engine_manager = manager.clone();
 
-pub(crate) fn apply_webview_context<'a>(
-  webview_label: String,
-  browser_context: &'a WebContextStore,
-  data_directory: Option<PathBuf>,
-) -> Result<(
-  MutexGuard<'a, HashMap<Option<PathBuf>, WebContext>>,
-  Option<PathBuf>,
-  Option<PathBuf>,
-)> {
-  let mut contexts = lock_state(browser_context, "browser_context")?;
-
-  let is_first_context = contexts.is_empty();
-
-  // Identisch zum Original
-  let automation_enabled = std::env::var("TAURINO_WEBVIEW_AUTOMATION").as_deref() == Ok("true");
-
-  let web_context_key = data_directory;
-
-  match contexts.entry(web_context_key.clone()) {
-    Occupied(occupied) => {
-      let occupied = occupied.into_mut();
-
-      occupied.referenced_by_webviews.insert(webview_label);
-    }
-
-    Vacant(vacant) => {
-      let mut web_context = WryContext::new(web_context_key.clone());
-
-      web_context.set_allows_automation(if automation_enabled {
-        is_first_context
-      } else {
-        false
-      });
-
-      vacant.insert(WebContext {
-        inner: web_context,
-        referenced_by_webviews: [webview_label].into(),
-        registered_custom_protocols: HashSet::new(),
-      });
-    }
-  }
-
-  // Exakt dieselbe Logik wie im Original
-  let context_key = if automation_enabled {
-    None
-  } else {
-    web_context_key.clone()
-  };
-
-  Ok((contexts, web_context_key, context_key))
-}
-
-pub fn apply_build_webview<'a>(
-  window: &taurino_core::native::tao::window::Window,
-  webview_builder: WebViewBuilder<'a>,
-  webview_label: &str,
-  child: bool,
-) -> Result<taurino_core::native::wry::WebView> {
-  let webview = match child {
-    #[cfg(not(any(
-      target_os = "windows",
-      target_os = "macos",
-      target_os = "ios",
-      target_os = "android"
-    )))]
-    true => {
-      let vbox = window.default_vbox().ok_or_else(|| {
-        anyhow::anyhow!(
-          "failed to create child WebView `{}`: \
-                     window does not provide a GTK default vbox",
-          options.label
-        )
-      })?;
-      webview_builder.build_gtk(vbox)
-    }
-    #[cfg(any(
-      target_os = "windows",
-      target_os = "macos",
-      target_os = "ios",
-      target_os = "android"
-    ))]
-    true => webview_builder.build_as_child(window),
-    false => {
-      #[cfg(any(
-        target_os = "windows",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "android"
-      ))]
-      let builder = webview_builder.build(window);
-      #[cfg(not(any(
-        target_os = "windows",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "android"
-      )))]
-      let builder = {
-        let vbox = window.default_vbox().ok_or_else(|| {
-          anyhow::anyhow!(
-            "failed to create WebView `{}`: \
-                         window does not provide a GTK default vbox",
-            webview_label
-          )
-        })?;
-        webview_builder.build_gtk(vbox)
+    webview_builder = webview_builder.with_new_window_req_handler(move |raw_url, features| {
+      let Ok(url) = raw_url.parse::<Url>() else {
+        return taurino_core::native::wry::NewWindowResponse::Deny;
       };
-      builder
-    }
-  }
-  .map_err(|error| anyhow::anyhow!("failed to build WebView `{}`: {error}", webview_label))?;
-  if child == false {
-    #[cfg(any(
-      target_os = "linux",
-      target_os = "dragonfly",
-      target_os = "freebsd",
-      target_os = "netbsd",
-      target_os = "openbsd"
-    ))]
-    undecorated_resizing::attach_resize_handler(&webview);
 
-    #[cfg(windows)]
-    if window.is_resizable() && !window.is_decorated() {
-      undecorated_resizing::attach_resize_handler(window.hwnd(), window.has_undecorated_shadow());
-    }
-  }
+      let response = new_window_handler(
+        &policy,
+        url,
+        NewWindowFeatures::new(
+          features.size,
+          features.position,
+          NewWindowOpener {
+            webview: features.opener.webview,
 
-  Ok(webview)
-}
+            #[cfg(windows)]
+            environment: features.opener.environment,
 
-/*
- */
+            #[cfg(target_os = "macos")]
+            target_configuration: features.opener.target_configuration,
+          },
+        ),
+        engine_manager.clone(),
+      );
 
-/*
-fn new_window_handler(
-    policy: &NewWindowPolicy,
-    url: Url,
-    features: NewWindowFeatures,
-    engine_manager: Arc<EngineManager>,
-) -> Result<NewWindowResponse> {
-    match policy.evaluate(&url) {
-        NewWindowAction::Allow => Ok(NewWindowResponse::Allow),
+      match response {
+        Ok(NewWindowResponse::Allow) => taurino_core::native::wry::NewWindowResponse::Allow,
 
-        NewWindowAction::Deny => Ok(NewWindowResponse::Deny),
+        Ok(NewWindowResponse::Create { window_id }) => {
+          let manager = engine_manager.clone();
 
-        NewWindowAction::Create { window } => {
-            let mut window_options = *window;
+          let window_manager = match manager.window() {
+            Ok(manager) => manager,
+            Err(error) => {
+              eprintln!("failed to lock WindowManager for new-window request: {error}");
 
-            // requested URL in die Konfiguration des neuen WebViews übernehmen
-            //
-            // z. B.:
-            // window_options.webview.url = WebviewUrl::External(url);
+              return taurino_core::native::wry::NewWindowResponse::Deny;
+            }
+          };
 
-            // window.open()-Features ggf. übernehmen
-            //
-            // if let Some(size) = features.size() {
-            //     window_options.width = Some(size.width);
-            //     window_options.height = Some(size.height);
-            // }
-            //
-            // if let Some(position) = features.position() {
-            //     window_options.x = Some(position.x);
-            //     window_options.y = Some(position.y);
-            // }
+          let Some(window) = window_manager.get_by_id(window_id) else {
+            eprintln!("window {:?} not found for new-window request", window_id);
 
-            let window_id = engine_manager.create_window_from_new_window_request(
-                window_options,
-                features,
-            )?;
+            return taurino_core::native::wry::NewWindowResponse::Deny;
+          };
 
-            Ok(NewWindowResponse::Create { window_id })
+          let Some(webview) = window.webview(webview_id.clone()) else {
+            eprintln!(
+              "webview {} not found in window {:?}",
+              webview_id.get(),
+              window_id
+            );
+
+            return taurino_core::native::wry::NewWindowResponse::Deny;
+          };
+
+          taurino_core::native::wry::NewWindowResponse::Create {
+            #[cfg(target_os = "macos")]
+            webview: webview.as_wry().webview().into_super(),
+
+            #[cfg(any(
+              target_os = "linux",
+              target_os = "dragonfly",
+              target_os = "freebsd",
+              target_os = "netbsd",
+              target_os = "openbsd",
+            ))]
+            webview: webview.as_wry().webview(),
+
+            #[cfg(windows)]
+            webview: webview.as_wry().webview(),
+          }
         }
-    }
+
+        Ok(NewWindowResponse::Deny) => taurino_core::native::wry::NewWindowResponse::Deny,
+
+        Err(error) => {
+          eprintln!("new-window handler failed: {error}");
+
+          taurino_core::native::wry::NewWindowResponse::Deny
+        }
+      }
+    });
+  }
+
+  Ok(webview_builder)
 }
-
-
-
-
-
-*/
-
-/*
-
-new_window_handler
-
-
-
-
-NewWindowAction::Create { window } => {
-    let mut window_options = *window;
-
-    // requested URL setzen
-    // window_options.webview.url = WebviewUrl::External(url);
-
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    engine_manager
-        .proxy()?
-        .send_event(Message::CreateWindow(CreateWindowRequest {
-            options: window_options,
-            response: tx,
-        }))
-        .map_err(|_| anyhow!("failed to send CreateWindow request"))?;
-
-    let window_id = rx
-        .recv()
-        .map_err(|_| anyhow!("CreateWindow response channel closed"))??;
-
-    Ok(NewWindowResponse::Create { window_id })
-}
-
-
-eventloop
-
-
-
-match event {
-    Event::UserEvent(Message::CreateWindow(request)) => {
-        let result = {
-            let mut window_manager = engine_manager.window_mut()?;
-
-            window_manager.open_window(
-                &request.options,
-                event_loop_target,
-            )
-        };
-
-        let _ = request.response.send(result);
-    }
-
-    // ...
-}
-
-
-*/
-
-/*
-
-let browser_context = manager.webcontext()?;
-
-let (
-    mut contexts,
-    web_context_key,
-    context_key,
-) = apply_webview_context(
-    options.label.clone(),
-    &browser_context,
-    options.data_directory.clone(),
-)?;
-
-let web_context = contexts
-    .get_mut(&web_context_key)
-    .expect("WebContext must exist");
-
-// Identisch zum Original
-let webview_builder =
-    WebViewBuilder::new_with_web_context(
-        &mut web_context.inner,
-    )
-    .with_devtools(true)
-    .with_id(&options.label)
-    .with_focused(window_options.focus)
-    .with_transparent(window_options.transparent)
-    .with_accept_first_mouse(window_options.accept_first_mouse)
-    .with_incognito(options.incognito)
-    .with_clipboard(options.enable_clipboard_access)
-    .with_hotkeys_zoom(options.zoom_hotkeys_enabled)
-    .with_general_autofill_enabled(
-        options.general_autofill_enabled,
-    );
-
-*/

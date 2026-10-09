@@ -3,8 +3,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 
 use taurino_core::{
-  EngineWindowTarget, NewWindowFeatures, NewWindowOpener, NewWindowResponse, WebView,
-  WebViewManager, from_wry_permission_kind,
+  EngineWindowTarget, WebView, WebViewManager, from_wry_permission_kind,
   menu::RawWindow,
   native::wry::WebViewBuilder,
   platforms::{MonitorExt, calculate_window_center_position},
@@ -15,7 +14,12 @@ use taurino_core::{
   },
   to_wry_permission_response,
   tools::{arc_mut, find_monitor_for_position},
-  window::{Window, WindowBuilder},
+  window::{
+    Window, WindowBuilder,
+    util::{
+      all_initialization_scripts, apply_build_webview, apply_webview_bounds, apply_webview_context,
+    },
+  },
 };
 #[cfg(windows)]
 use taurino_core::{
@@ -26,8 +30,7 @@ use url::Url;
 use crate::{
   manager::EngineManager,
   window::helpers::{
-    all_initialization_scripts, apply_build_webview, apply_drag_drop_handlers,
-    apply_webview_bounds, apply_webview_context, attach_webview, new_window_handler,
+    apply_drag_drop_handlers, apply_new_window_requested, attach_webview,
     permission_request_handler,
   },
 };
@@ -63,7 +66,7 @@ use taurino_core::native::{
 // Windows
 // ============================================================================
 #[cfg(windows)]
-use taurino_core::native::{tao::platform::windows::WindowExtWindows, wry::WebViewExtWindows};
+use taurino_core::native::tao::platform::windows::WindowExtWindows;
 
 pub(crate) fn create_webview(
   engine_manager: Arc<EngineManager>,
@@ -75,8 +78,12 @@ pub(crate) fn create_webview(
   #[cfg(windows)] focused_webview: ArcMut<FocusState>,
 ) -> Result<WebView> {
   let child = options.child;
-  let all_initialization_scripts =
-    all_initialization_scripts(&window_options.label, &options.label)?;
+  let all_initialization_scripts = all_initialization_scripts(
+    &window_options.label,
+    &options.label,
+    options.use_https_scheme,
+    None,
+  )?;
 
   let manager = engine_manager.clone();
   let proxy = manager.proxy.clone();
@@ -84,6 +91,7 @@ pub(crate) fn create_webview(
   let browser_context = manager.webcontext()?;
 
   let (mut contexts, web_context_key, context_key) = apply_webview_context(
+    "TAURINO_WEBVIEW_AUTOMATION",
     options.label.clone(),
     &browser_context,
     options.data_directory.clone(),
@@ -102,7 +110,8 @@ pub(crate) fn create_webview(
     .with_incognito(options.incognito)
     .with_clipboard(options.enable_clipboard_access)
     .with_hotkeys_zoom(options.zoom_hotkeys_enabled)
-    .with_general_autofill_enabled(options.general_autofill_enabled);
+    .with_general_autofill_enabled(options.general_autofill_enabled)
+    .with_ipc_handler(move |req| println!("Request:{:?}", req));
 
   let (webview_bounds, mut webview_builder) = apply_webview_bounds(
     window,
@@ -158,70 +167,13 @@ pub(crate) fn create_webview(
       policy.allows(initial_url.as_ref(), &target_url)
     });
   }
-  if let Some(policy) = options.new_window_policy.clone() {
-    let engine_manager = manager.clone();
-    webview_builder = webview_builder.with_new_window_req_handler(move |raw_url, features| {
-      let Ok(url) = raw_url.parse::<Url>() else {
-        return taurino_core::native::wry::NewWindowResponse::Deny;
-      };
-      let response = new_window_handler(
-        &policy,
-        url,
-        NewWindowFeatures::new(
-          features.size,
-          features.position,
-          NewWindowOpener {
-            webview: features.opener.webview,
-            #[cfg(windows)]
-            environment: features.opener.environment,
-            #[cfg(target_os = "macos")]
-            target_configuration: features.opener.target_configuration,
-          },
-        ),
-        engine_manager.clone(),
-      );
-      match response {
-        Ok(NewWindowResponse::Allow) => taurino_core::native::wry::NewWindowResponse::Allow,
-        Ok(NewWindowResponse::Create { window_id }) => {
-          let manager = engine_manager.clone();
-          let window_manager = match manager.window() {
-            Ok(manager) => manager,
-            Err(error) => {
-              eprintln!("failed to lock WindowManager for new-window request: {error}");
-              return taurino_core::native::wry::NewWindowResponse::Deny;
-            }
-          };
-          let Some(window) = window_manager.get_by_id(window_id) else {
-            eprintln!("window {:?} not found for new-window request", window_id);
-            return taurino_core::native::wry::NewWindowResponse::Deny;
-          };
-          let Some(webview) = window.webview(id.clone()) else {
-            eprintln!("webview {} not found in window {:?}", id.get(), window_id);
-            return taurino_core::native::wry::NewWindowResponse::Deny;
-          };
-          taurino_core::native::wry::NewWindowResponse::Create {
-            #[cfg(target_os = "macos")]
-            webview: webview.as_wry().webview().into_super(),
-            #[cfg(any(
-              target_os = "linux",
-              target_os = "dragonfly",
-              target_os = "freebsd",
-              target_os = "netbsd",
-              target_os = "openbsd",
-            ))]
-            webview: webview.as_wry().webview(),
-            #[cfg(windows)]
-            webview: webview.as_wry().webview(),
-          }
-        }
-        Ok(NewWindowResponse::Deny) => taurino_core::native::wry::NewWindowResponse::Deny,
-        Err(error) => {
-          eprintln!("new-window handler failed: {error}");
-          taurino_core::native::wry::NewWindowResponse::Deny
-        }
-      }
-    });
-  }
+
+  let mut webview_builder = apply_new_window_requested(
+    engine_manager.clone(),
+    webview_builder,
+    id,
+    options.new_window_policy.clone(),
+  )?;
   #[cfg(any(target_os = "macos", target_os = "ios"))]
   {
     if let Some(policy) = options.web_content_process_terminate_policy.clone() {
@@ -252,7 +204,7 @@ pub(crate) fn create_webview(
     };
   }
   let webview = apply_build_webview(&window, webview_builder, &options.label, child)?;
-  webview.evaluate_script("console.log(window.__TAURINO_INTERNALS__)")?; 
+  // webview.evaluate_script("console.log(window.__TAURINO_INTERNALS__)")?;
   let webview = WebView::new(
     id,
     options.label.clone(),
