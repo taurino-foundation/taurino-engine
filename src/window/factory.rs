@@ -97,11 +97,11 @@ pub(crate) fn create_webview(
     options.data_directory.clone(),
   )?;
 
-  let _web_context = contexts
+  let web_context = contexts
     .get_mut(&web_context_key)
     .expect("WebContext must exist");
 
-  let webview_builder = WebViewBuilder::new() // new_with_web_context(&mut web_context.inner)
+  let webview_builder = WebViewBuilder::new_with_web_context(&mut web_context.inner)
     .with_devtools(true)
     .with_id(&options.label)
     .with_focused(window_options.focus)
