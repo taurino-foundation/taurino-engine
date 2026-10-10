@@ -32,10 +32,10 @@ use taurino_core::{
 use taurino_core::schema::webview::WebContentProcessTerminatePolicy;
 
 #[cfg(windows)]
-use taurino_core::{native::wry::WebViewExtWindows};
+use taurino_core::{schema::FocusState, native::wry::WebViewExtWindows};
 
 
-use taurino_core::{schema::FocusState, tools::ArcMut};
+use taurino_core::tools::ArcMut;
 
 use url::Url;
 
