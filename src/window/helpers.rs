@@ -6,6 +6,16 @@ use anyhow::{Result, anyhow};
 use std::sync::{Arc, Mutex};
 #[cfg(any(target_os = "macos"))]
 pub  use taurino_core::native::wry::WebViewExtMacOS;
+#[cfg(not(any(
+  target_os = "windows",
+  target_os = "macos",
+  target_os = "ios",
+  target_os = "android"
+)))]
+use taurino_core::native::wry::WebViewExtUnix;
+
+
+
 use taurino_core::{
   EventLoopMessage, NewWindowFeatures, NewWindowOpener, NewWindowResponse, PermissionKind,
   PermissionResponse, WebViewManager,
