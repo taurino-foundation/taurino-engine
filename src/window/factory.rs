@@ -49,7 +49,7 @@ use taurino_core::native::tao::platform::macos::WindowBuilderExtMacOS;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use taurino_core::native::tao::window::Fullscreen;
 #[cfg(target_os = "macos")]
-use taurino_core::native::wry::{WebViewBuilderExtDarwin, WebViewExtMacOS};
+use taurino_core::native::wry::{WebViewBuilderExtDarwin, /* WebViewExtMacOS */};
 #[cfg(any(
   target_os = "linux",
   target_os = "dragonfly",

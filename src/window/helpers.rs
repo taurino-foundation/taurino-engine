@@ -4,7 +4,8 @@ use anyhow::{Result, anyhow};
 /* use serialize_to_javascript::{Template, default_template}; */
 
 use std::sync::{Arc, Mutex};
-
+#[cfg(any(target_os = "macos"))]
+pub  use taurino_core::native::wry::WebViewExtMacOS;
 use taurino_core::{
   EventLoopMessage, NewWindowFeatures, NewWindowOpener, NewWindowResponse, PermissionKind,
   PermissionResponse, WebViewManager,
@@ -21,7 +22,10 @@ use taurino_core::{
 use taurino_core::schema::webview::WebContentProcessTerminatePolicy;
 
 #[cfg(windows)]
-use taurino_core::{native::wry::WebViewExtWindows, schema::FocusState, tools::ArcMut};
+use taurino_core::{native::wry::WebViewExtWindows};
+
+
+use taurino_core::{schema::FocusState, tools::ArcMut};
 
 use url::Url;
 
