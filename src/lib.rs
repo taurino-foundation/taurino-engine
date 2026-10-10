@@ -230,8 +230,8 @@ impl Engine {
   /// The signal-handler installation currently uses `expect`, meaning that a
   /// failure to install the process handler causes process termination rather
   /// than being returned through this method.
-  pub fn new() -> Result<Self> {
-    let mut config = Config::new("")?;
+  pub fn new(config:&str) -> Result<Self> {
+    let mut config = Config::new(config)?;
     config.add_window_config(WindowConfig {
       // center: true,
       center: true,
